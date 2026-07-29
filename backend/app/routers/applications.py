@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..activity import record
@@ -38,42 +39,54 @@ async def upsert_application(
         portal = await session.get(Portal, provided["applied_via_portal_id"])
         if portal is None or portal.group_id != company.group_id:
             raise HTTPException(status_code=422, detail="Unknown portal for this group")
-    row = await session.scalar(
-        select(Application).where(
-            Application.company_id == cid, Application.user_id == user.id
+    saved_row: Application | None = None
+    for _attempt in range(2):
+        row = await session.scalar(
+            select(Application).where(
+                Application.company_id == cid, Application.user_id == user.id
+            )
         )
-    )
-    old_status = row.status if row is not None else None
-    if row is None:
-        row = Application(company_id=cid, user_id=user.id, status=body.status)
-        session.add(row)
-    # Merge semantics: only fields present in the request JSON are applied.
-    # An explicit null clears the column; an omitted field is left unchanged
-    # on an existing row and defaults to null on create.
-    for field in (
-        "status", "applied_via_portal_id", "applied_at", "follow_up_at", "url", "notes"
-    ):
-        if field in provided:
-            setattr(row, field, provided[field])
-    row.updated_at = utcnow()
-    await session.flush()
-    if old_status != body.status:
-        await record(
-            session,
-            request.app.state.broker,
-            group_id=company.group_id,
-            user=user,
-            type_="application_status_changed",
-            company=company,
-            detail={"from": old_status, "to": body.status},
-        )
-    await session.commit()
+        old_status = row.status if row is not None else None
+        if row is None:
+            row = Application(company_id=cid, user_id=user.id, status=body.status)
+            session.add(row)
+        # Merge semantics: only fields present in the request JSON are applied.
+        # An explicit null clears the column; an omitted field is left unchanged
+        # on an existing row and defaults to null on create.
+        for field in (
+            "status", "applied_via_portal_id", "applied_at", "follow_up_at", "url", "notes"
+        ):
+            if field in provided:
+                setattr(row, field, provided[field])
+        row.updated_at = utcnow()
+        try:
+            await session.flush()
+        except IntegrityError:
+            # Concurrent request inserted my row first: retry as an update.
+            await session.rollback()
+            company = await get_company_for_member(session, cid, user)
+            continue
+        if old_status != body.status:
+            await record(
+                session,
+                request.app.state.broker,
+                group_id=company.group_id,
+                user=user,
+                type_="application_status_changed",
+                company=company,
+                detail={"from": old_status, "to": body.status},
+            )
+        await session.commit()
+        saved_row = row
+        break
+    if saved_row is None:
+        raise HTTPException(status_code=409, detail="Concurrent update, please retry")
     portal_name = None
-    if row.applied_via_portal_id is not None:
+    if saved_row.applied_via_portal_id is not None:
         portal_name = await session.scalar(
-            select(Portal.name).where(Portal.id == row.applied_via_portal_id)
+            select(Portal.name).where(Portal.id == saved_row.applied_via_portal_id)
         )
-    return serialize_application_full(row, user, company.name, portal_name)
+    return serialize_application_full(saved_row, user, company.name, portal_name)
 
 
 @router.delete("/companies/{cid}/application")

@@ -6,11 +6,9 @@ import clsx from "clsx";
 export function Menu({
   trigger,
   children,
-  align = "right",
 }: {
   trigger: (open: boolean) => ReactNode;
   children: (close: () => void) => ReactNode;
-  align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -45,10 +43,7 @@ export function Menu({
       {open && (
         <div
           role="menu"
-          className={clsx(
-            "overlay-in absolute z-40 mt-1.5 w-56 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-pop",
-            align === "right" ? "right-0" : "left-0",
-          )}
+          className="overlay-in absolute right-0 z-40 mt-1.5 w-56 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-pop"
         >
           {children(() => setOpen(false))}
         </div>

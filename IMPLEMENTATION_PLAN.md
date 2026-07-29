@@ -137,7 +137,7 @@ Activity types: `member_joined`, `company_added`, `portal_added`, `application_s
 
 ## 6. API contract (frozen; base `/api`; all responses JSON)
 
-Conventions: auth via `Authorization: Bearer <token>`; SSE endpoints ALSO accept `?access_token=<token>` (EventSource cannot send headers). Errors: `{"detail": "message"}`. 401 = bad/missing token. A resource in a group the caller does not belong to returns **404** (no existence leak). 403 only for known-but-forbidden (e.g. deleting a company you did not post). Validation errors 422 (FastAPI default).
+Conventions: auth via `Authorization: Bearer <token>`; SSE and CSV-export endpoints ONLY additionally accept `?access_token=<token>` (EventSource and `<a href>` downloads cannot send headers; the query token is rejected everywhere else so full-privilege tokens do not spread into URLs, and the uvicorn access log redacts `access_token` values). Errors: `{"detail": "message"}`. 401 = bad/missing token. A resource in a group the caller does not belong to returns **404** (no existence leak). 403 only for known-but-forbidden (e.g. deleting a company you did not post). Validation errors 422 (FastAPI default).
 
 Shared shapes:
 
@@ -171,7 +171,7 @@ GroupDetail     Group + {members: [{user_id, username, display_name, role, joine
 - `GET /api/groups` -> `[Group]` (mine only).
 - `GET /api/groups/{gid}` -> `GroupDetail` (members only).
 - `POST /api/groups/join` `{invite_code}` -> `Group`. Case-insensitive code. 404 unknown code; joining twice is idempotent (returns group).
-- `POST /api/groups/{gid}/leave` -> `{ok: true}`. Owner cannot leave while other members exist (400).
+- `POST /api/groups/{gid}/leave` -> `{ok: true}`. Owner cannot leave while other members exist (400). The last remaining member cannot leave either (400; group deletion is a non-goal, so no path may destroy group data). A successful leave also deletes the leaver's applications and portal statuses in that group (their personal pipeline goes with them; stats stay reconciled); their comments and activity rows remain as history.
 - `PATCH /api/groups/{gid}` `{name}` -> `Group`. Owner only (403 otherwise).
 
 ### Companies (`routers/companies.py`)
@@ -191,7 +191,7 @@ GroupDetail     Group + {members: [{user_id, username, display_name, role, joine
 - `POST /api/groups/{gid}/portals` `{name, url?, notes?}` -> `Portal`. Activity `portal_added`.
 - `PATCH /api/portals/{pid}` (partial: name, url, notes) -> `Portal` (any member).
 - `DELETE /api/portals/{pid}` -> `{ok: true}`. Poster or group owner only.
-- `PUT /api/portals/{pid}/status` `{status, rating?, notes?}` -> Portal's status row `{user_id, username, display_name, status, rating, notes, updated_at}`. Upsert mine; `status: "none"` deletes my row. Activity `portal_status_changed` on change.
+- `PUT /api/portals/{pid}/status` `{status, rating?, notes?}` -> Portal's status row `{user_id, username, display_name, status, rating, notes, updated_at}` (`updated_at` null only in the `status: "none"` response). **Merge semantics like the application PUT**: only provided fields are applied, explicit null clears, omitted fields are preserved. `status: "none"` deletes my row. Activity `portal_status_changed` on change.
 
 ### Comments (`routers/comments.py`)
 - `GET /api/companies/{cid}/comments` -> `[Comment]` (asc by created_at).
@@ -288,3 +288,4 @@ Email/password reset, avatar uploads, push/mobile notifications, roles beyond ow
 - **Open registration** is acceptable for a private/LAN deployment; DEPLOY.md tells internet deployers to treat the URL as semi-private (and hardening like invite-only registration is a listed future).
 - Ports 8100/3100 chosen to avoid colliding with the user's other project (8000/3000).
 - **Design pivot (2026-07-29, user request):** the original dark "NightShift" theme was replaced by the light "Worklight" system above, following the Anthropic frontend-design skill: dark-bg-plus-single-bright-accent is a generic AI default; a professional daily-use tool wants a monochrome ink interface where color only encodes status meaning, usability-first microcopy, and minimal motion.
+- **Adversarial-review hardening (2026-07-29):** last-member leave is blocked (no code path may destroy group data); leave deletes the leaver's applications/portal statuses; upsert/join races handle IntegrityError instead of 500ing; CSV cells starting with `= + - @` TAB CR are quote-prefixed (formula-injection guard); `?access_token=` is scoped to SSE + exports and redacted from access logs; PBKDF2 runs off the event loop with a per-user+IP login throttle (429); JWT base64 decoding is strict; `data/.secret` is written 0600; SSE queues are bounded (500) and re-check membership per event; company search escapes LIKE wildcards; request bodies capped (1 MB + field length limits); user-supplied URLs render through a `safeHref` http/https allowlist. Known accepted v1 limits: SSE publish happens just before commit (harmless: clients reconcile on refetch), no pagination on activity beyond `limit`, archived companies have no UI control yet.

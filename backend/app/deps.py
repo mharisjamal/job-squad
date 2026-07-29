@@ -20,14 +20,22 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def _query_token_allowed(path: str) -> bool:
+    """?access_token= is honored only where headers are impossible:
+    SSE (EventSource) and CSV downloads (<a href>)."""
+    return path.endswith("/sse") or "/export/" in path
+
+
 def _extract_token(request: Request) -> str | None:
     auth = request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         token = auth[7:].strip()
         if token:
             return token
-    token = request.query_params.get("access_token")
-    return token or None
+    if _query_token_allowed(request.url.path):
+        token = request.query_params.get("access_token")
+        return token or None
+    return None
 
 
 async def get_current_user(

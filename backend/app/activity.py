@@ -7,15 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Activity, Company, Portal, User
 from .schemas import serialize_activity
 
+SUBSCRIBER_QUEUE_MAXSIZE = 500
+
 
 class ActivityBroker:
-    """Per-group fanout of activity payloads to SSE subscriber queues."""
+    """Per-group fanout of activity payloads to SSE subscriber queues.
+
+    Queues are bounded; a subscriber that falls SUBSCRIBER_QUEUE_MAXSIZE
+    events behind is dropped: its backlog is discarded and a None sentinel
+    is enqueued so its stream generator terminates instead of idling.
+    """
 
     def __init__(self) -> None:
         self._subscribers: dict[int, set[asyncio.Queue]] = {}
 
     def subscribe(self, group_id: int) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAXSIZE)
         self._subscribers.setdefault(group_id, set()).add(queue)
         return queue
 
@@ -28,7 +35,19 @@ class ActivityBroker:
 
     def publish(self, group_id: int, payload: dict) -> None:
         for queue in tuple(self._subscribers.get(group_id, ())):
-            queue.put_nowait(payload)
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                self._drop_subscriber(group_id, queue)
+
+    def _drop_subscriber(self, group_id: int, queue: asyncio.Queue) -> None:
+        self.unsubscribe(group_id, queue)
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait(None)
 
 
 async def record(

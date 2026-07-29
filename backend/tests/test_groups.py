@@ -68,19 +68,70 @@ async def test_leave_rules(client, register, make_group):
     # Owner cannot leave while another member remains.
     resp = await client.post(f"/api/groups/{group['id']}/leave", headers=owner["headers"])
     assert resp.status_code == 400
+    assert "Owner cannot leave" in resp.json()["detail"]
 
     # A plain member can leave.
     resp = await client.post(f"/api/groups/{group['id']}/leave", headers=friend["headers"])
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
-    # Now the owner (sole member) can leave too.
+    # The last remaining member cannot leave (no group deletion in v1).
     resp = await client.post(f"/api/groups/{group['id']}/leave", headers=owner["headers"])
+    assert resp.status_code == 400
+    assert "last member" in resp.json()["detail"]
+
+    # The group and its data are still there for the owner.
+    resp = await client.get(f"/api/groups/{group['id']}", headers=owner["headers"])
+    assert resp.status_code == 200
+    assert resp.json()["member_count"] == 1
+
+
+async def test_leave_removes_pipeline_keeps_comments(
+    client, register, make_group, make_company, make_portal
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await client.post(
+        "/api/groups/join",
+        json={"invite_code": group["invite_code"]},
+        headers=friend["headers"],
+    )
+    company = await make_company(owner["headers"], group["id"], name="TechCorp")
+    portal = await make_portal(owner["headers"], group["id"], name="LinkedIn")
+
+    # The friend builds a personal pipeline and leaves a comment.
+    await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "applied"},
+        headers=friend["headers"],
+    )
+    await client.put(
+        f"/api/portals/{portal['id']}/status",
+        json={"status": "active", "rating": 4},
+        headers=friend["headers"],
+    )
+    await client.post(
+        f"/api/companies/{company['id']}/comments",
+        json={"body": "good place"},
+        headers=friend["headers"],
+    )
+
+    resp = await client.post(f"/api/groups/{group['id']}/leave", headers=friend["headers"])
     assert resp.status_code == 200
 
-    # The departed group is gone for its ex-owner.
-    resp = await client.get(f"/api/groups/{group['id']}", headers=owner["headers"])
-    assert resp.status_code == 404
+    # Their applications and portal statuses left with them.
+    detail = (
+        await client.get(f"/api/companies/{company['id']}", headers=owner["headers"])
+    ).json()
+    assert [a["username"] for a in detail["applications"]] == []
+    portals = (
+        await client.get(f"/api/groups/{group['id']}/portals", headers=owner["headers"])
+    ).json()
+    assert portals[0]["statuses"] == []
+
+    # Their comments (conversation history) remain.
+    assert [c["username"] for c in detail["comments"]] == ["ali"]
 
 
 async def test_rename_is_owner_only(client, register, make_group):

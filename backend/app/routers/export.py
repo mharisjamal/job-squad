@@ -15,8 +15,17 @@ from .portals import portal_stats
 router = APIRouter(tags=["export"])
 
 
+# Values starting with these can execute as formulas in spreadsheet apps.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
 def _cell(value) -> str:
-    return "" if value is None else str(value)
+    if value is None:
+        return ""
+    text = str(value)
+    if text.startswith(_FORMULA_PREFIXES):
+        return "'" + text
+    return text
 
 
 def _csv_response(filename: str, header: list[str], rows: list[list[str]]) -> Response:
@@ -64,12 +73,12 @@ async def export_applications(
     ]
     data = [
         [
-            company.name,
-            member.display_name,
-            application.status,
+            _cell(company.name),
+            _cell(member.display_name),
+            _cell(application.status),
             _cell(iso_date(application.applied_at)),
             _cell(iso_date(application.follow_up_at)),
-            portal.name if portal is not None else "",
+            _cell(portal.name) if portal is not None else "",
             _cell(application.url),
             _cell(application.notes),
             _cell(iso_z(application.updated_at)),
@@ -100,13 +109,13 @@ async def export_companies(
     ]
     data = [
         [
-            company.name,
+            _cell(company.name),
             _cell(company.website),
             _cell(company.careers_url),
             _cell(company.location),
-            ";".join(str(t) for t in (company.tags or [])),
+            _cell(";".join(str(t) for t in (company.tags or []))),
             _cell(company.notes),
-            poster.display_name,
+            _cell(poster.display_name),
             _cell(iso_z(company.created_at)),
             "true" if company.archived else "false",
         ]
@@ -134,10 +143,10 @@ async def export_portals(
     header = ["name", "url", "notes", "posted_by", "applications_via", "created_at"]
     data = [
         [
-            portal.name,
+            _cell(portal.name),
             _cell(portal.url),
             _cell(portal.notes),
-            poster.display_name,
+            _cell(poster.display_name),
             str(stats[portal.id]["applications_via"]),
             _cell(iso_z(portal.created_at)),
         ]

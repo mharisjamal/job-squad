@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..activity import record
@@ -171,12 +172,13 @@ async def upsert_portal_status(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     portal = await get_portal_for_member(session, pid, user)
-    row = await session.scalar(
-        select(PortalStatus).where(
-            PortalStatus.portal_id == pid, PortalStatus.user_id == user.id
-        )
-    )
+    provided = body.model_dump(exclude_unset=True)
     if body.status == "none":
+        row = await session.scalar(
+            select(PortalStatus).where(
+                PortalStatus.portal_id == pid, PortalStatus.user_id == user.id
+            )
+        )
         if row is not None:
             await session.delete(row)
             await record(
@@ -198,24 +200,45 @@ async def upsert_portal_status(
             "notes": None,
             "updated_at": None,
         }
-    changed = row is None or row.status != body.status
-    if row is None:
-        row = PortalStatus(portal_id=pid, user_id=user.id, status=body.status)
-        session.add(row)
-    row.status = body.status
-    row.rating = body.rating
-    row.notes = body.notes
-    row.updated_at = utcnow()
-    await session.flush()
-    if changed:
-        await record(
-            session,
-            request.app.state.broker,
-            group_id=portal.group_id,
-            user=user,
-            type_="portal_status_changed",
-            portal=portal,
-            detail={"to": body.status},
+    saved_row: PortalStatus | None = None
+    for _attempt in range(2):
+        row = await session.scalar(
+            select(PortalStatus).where(
+                PortalStatus.portal_id == pid, PortalStatus.user_id == user.id
+            )
         )
-    await session.commit()
-    return serialize_portal_status(row, user)
+        changed = row is None or row.status != body.status
+        if row is None:
+            row = PortalStatus(portal_id=pid, user_id=user.id, status=body.status)
+            session.add(row)
+        # Merge semantics (same contract as the application PUT): status is
+        # required; omitted rating/notes are preserved; explicit null clears.
+        row.status = body.status
+        if "rating" in provided:
+            row.rating = provided["rating"]
+        if "notes" in provided:
+            row.notes = provided["notes"]
+        row.updated_at = utcnow()
+        try:
+            await session.flush()
+        except IntegrityError:
+            # Concurrent request inserted my row first: retry as an update.
+            await session.rollback()
+            portal = await get_portal_for_member(session, pid, user)
+            continue
+        if changed:
+            await record(
+                session,
+                request.app.state.broker,
+                group_id=portal.group_id,
+                user=user,
+                type_="portal_status_changed",
+                portal=portal,
+                detail={"to": body.status},
+            )
+        await session.commit()
+        saved_row = row
+        break
+    if saved_row is None:
+        raise HTTPException(status_code=409, detail="Concurrent update, please retry")
+    return serialize_portal_status(saved_row, user)

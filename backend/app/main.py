@@ -1,10 +1,12 @@
 """App factory: CORS, routers under /api, /health, SPA static serving."""
 
+import logging
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .activity import ActivityBroker
@@ -34,6 +36,27 @@ _ROUTERS = (
     export.router,
 )
 
+MAX_REQUEST_BODY_BYTES = 1_000_000
+
+_ACCESS_TOKEN_RE = re.compile(r"(access_token=)[^\s&\"']+")
+
+
+class AccessTokenRedactionFilter(logging.Filter):
+    """Scrub access_token values out of uvicorn access-log lines."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _ACCESS_TOKEN_RE.sub(r"\1***", record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _ACCESS_TOKEN_RE.sub(r"\1***", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+
+
+_REDACTION_FILTER = AccessTokenRedactionFilter()
+
 
 def create_app() -> FastAPI:
     settings = Settings.load()
@@ -50,6 +73,10 @@ def create_app() -> FastAPI:
     app.state.sessionmaker = make_sessionmaker(app.state.engine)
     app.state.broker = ActivityBroker()
 
+    access_logger = logging.getLogger("uvicorn.access")
+    if _REDACTION_FILTER not in access_logger.filters:
+        access_logger.addFilter(_REDACTION_FILTER)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -57,6 +84,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def limit_body_size(request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and content_length.isdigit():
+            if int(content_length) > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    {"detail": "Request body too large"}, status_code=413
+                )
+        return await call_next(request)
 
     for router in _ROUTERS:
         app.include_router(router, prefix="/api")

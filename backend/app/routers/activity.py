@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from ..deps import get_current_user, get_session, require_member
-from ..models import Activity, Company, Portal, User
+from ..models import Activity, Company, GroupMember, Portal, User
 from ..schemas import serialize_activity
 
 router = APIRouter(tags=["activity"])
@@ -56,6 +56,17 @@ async def activity_sse(
     # Release the DB connection before holding the stream open.
     await session.close()
     broker = request.app.state.broker
+    sessionmaker = request.app.state.sessionmaker
+    user_id = user.id
+
+    async def _still_member() -> bool:
+        async with sessionmaker() as check_session:
+            member = await check_session.scalar(
+                select(GroupMember).where(
+                    GroupMember.group_id == gid, GroupMember.user_id == user_id
+                )
+            )
+        return member is not None
 
     async def event_stream():
         queue = broker.subscribe(gid)
@@ -64,6 +75,12 @@ async def activity_sse(
             yield {"event": "hello", "data": json.dumps({"group_id": gid})}
             while True:
                 payload = await queue.get()
+                if payload is None:
+                    # Dropped by the broker (subscriber fell too far behind).
+                    break
+                # An ex-member's open stream must stop receiving group events.
+                if not await _still_member():
+                    break
                 yield {"event": "activity", "data": json.dumps(payload)}
         finally:
             broker.unsubscribe(gid, queue)

@@ -83,6 +83,49 @@ async def test_status_filters(client, register, make_group, make_company):
     assert resp.status_code == 422
 
 
+async def test_q_wildcards_are_literal(client, register, make_group, make_company):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    await make_company(account["headers"], group["id"], name="100% Remote Co")
+    await make_company(account["headers"], group["id"], name="TechCorp")
+    await make_company(account["headers"], group["id"], name="Under_Score")
+    # "arms" would match q="r_s" if _ were still a single-char wildcard.
+    await make_company(account["headers"], group["id"], name="Arms Industries")
+
+    # A bare % must not match everything, only names containing a literal %.
+    resp = await client.get(
+        f"/api/groups/{group['id']}/companies", params={"q": "%"}, headers=account["headers"]
+    )
+    assert [c["name"] for c in resp.json()] == ["100% Remote Co"]
+
+    # _ must not act as a single-char wildcard.
+    resp = await client.get(
+        f"/api/groups/{group['id']}/companies", params={"q": "r_s"}, headers=account["headers"]
+    )
+    assert [c["name"] for c in resp.json()] == ["Under_Score"]
+
+
+async def test_size_limits(client, register, make_group):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+
+    # Field cap: a company name over 120 chars is a validation error.
+    resp = await client.post(
+        f"/api/groups/{group['id']}/companies",
+        json={"name": "x" * 121},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 422
+
+    # Body cap: a payload over 1 MB is rejected before validation.
+    resp = await client.post(
+        f"/api/groups/{group['id']}/companies",
+        json={"name": "ok", "notes": "x" * 1_100_000},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 413
+
+
 async def test_tag_filter(client, register, make_group, make_company):
     account = await register(username="haris")
     group = await make_group(account["headers"])

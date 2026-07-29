@@ -36,15 +36,30 @@ export function formatDate(iso: string | null | undefined): string {
   });
 }
 
-export function formatDateTime(iso: string | null | undefined): string {
-  const d = parseDate(iso);
-  if (!d) return "";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+/**
+ * Input-boundary normalization for user-entered URLs (applied on submit,
+ * never while typing): trim, and prefix https:// when no http(s) scheme.
+ */
+export function normalizeUrl(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
+
+/**
+ * Returns the url only when it parses with an http: or https: protocol,
+ * else undefined. Guards user-supplied hrefs (javascript:, data:, etc).
+ */
+export function safeHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return url;
+  } catch {
+    // not a parseable absolute URL
+  }
+  return undefined;
 }
 
 /** Day bucket label for activity grouping: Today, Yesterday, or a date. */

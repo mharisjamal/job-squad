@@ -41,5 +41,8 @@ def _load_or_create_secret(path: Path) -> str:
             return existing
     path.parent.mkdir(parents=True, exist_ok=True)
     generated = secrets.token_hex(32)
-    path.write_text(generated, encoding="utf-8")
+    # Owner-only permissions on POSIX; harmless no-op semantics on Windows.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(generated)
     return generated

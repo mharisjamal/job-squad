@@ -34,12 +34,61 @@ import { Avatar } from "../components/ui/MemberChip";
 import { ErrorState } from "../components/ui/EmptyState";
 import { PageSpinner } from "../components/ui/Spinner";
 import { STATUSES } from "../config/statuses";
-import { formatDate, timeAgo } from "../lib/format";
+import { formatDate, normalizeUrl, safeHref, timeAgo } from "../lib/format";
 import { ApiError } from "../lib/api";
 import type { ApplicationFull, ApplicationStatus } from "../types/api";
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+/** External-link chip; falls back to plain text when the URL is not http(s). */
+function LinkChip({ icon: Icon, label, url }: { icon: typeof Globe; label: string; url: string }) {
+  const href = safeHref(url);
+  if (!href) {
+    return (
+      <span className="inline-flex max-w-60 items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-muted">
+        <Icon className="h-3 w-3" aria-hidden />
+        <span className="truncate">{url}</span>
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
+    >
+      <Icon className="h-3 w-3 text-muted" aria-hidden />
+      {label}
+      <ExternalLink className="h-3 w-3 text-muted" aria-hidden />
+    </a>
+  );
+}
+
+/** Quiet "Posting" link on a squad card; plain text when the URL is unsafe. */
+function PostingLink({ url }: { url: string }) {
+  const href = safeHref(url);
+  if (!href) {
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+        <span className="truncate">{url}</span>
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 text-muted transition-colors duration-150 ease-out hover:text-ink hover:underline"
+    >
+      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+      Posting
+    </a>
+  );
 }
 
 function MyApplicationEditor({
@@ -84,7 +133,7 @@ function MyApplicationEditor({
           applied_via_portal_id: portalId ? Number(portalId) : null,
           applied_at: appliedAt || null,
           follow_up_at: followUpAt || null,
-          url: url.trim() || null,
+          url: normalizeUrl(url) || null,
           notes: notes.trim() || null,
         },
       },
@@ -316,30 +365,8 @@ export default function CompanyDetail() {
               posted by {c.created_by_username} {timeAgo(c.created_at)}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {c.website && (
-                <a
-                  href={c.website}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
-                >
-                  <Globe className="h-3 w-3 text-muted" aria-hidden />
-                  Website
-                  <ExternalLink className="h-3 w-3 text-muted" aria-hidden />
-                </a>
-              )}
-              {c.careers_url && (
-                <a
-                  href={c.careers_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs font-medium text-ink transition-colors duration-150 ease-out hover:bg-hover"
-                >
-                  <Briefcase className="h-3 w-3 text-muted" aria-hidden />
-                  Careers
-                  <ExternalLink className="h-3 w-3 text-muted" aria-hidden />
-                </a>
-              )}
+              {c.website && <LinkChip icon={Globe} label="Website" url={c.website} />}
+              {c.careers_url && <LinkChip icon={Briefcase} label="Careers" url={c.careers_url} />}
               {c.tags.map((t) => (
                 <span
                   key={t}
@@ -424,6 +451,7 @@ export default function CompanyDetail() {
                         Follow up {formatDate(a.follow_up_at)}
                       </div>
                     )}
+                    {a.url && <PostingLink url={a.url} />}
                   </dl>
                   {a.notes && (
                     <p className="mt-2 whitespace-pre-wrap rounded-md bg-paper p-2.5 text-xs leading-relaxed text-ink/90">

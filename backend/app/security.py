@@ -29,10 +29,15 @@ def verify_password(password: str, stored: str) -> bool:
         iterations = int(iterations_s)
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(hash_hex)
+        # Inside the try: a malformed stored hash (e.g. negative iteration
+        # count) must yield False, never an exception.
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     except (ValueError, AttributeError):
         return False
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(digest, expected)
+
+
+_TO_STD_B64 = str.maketrans("-_", "+/")
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -40,7 +45,19 @@ def _b64url_encode(data: bytes) -> str:
 
 
 def _b64url_decode(segment: str) -> bytes:
-    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+    """Strict base64url decode: exactly one textual form per byte string.
+
+    Rejects padding characters, non-alphabet characters (validate=True) and
+    non-canonical encodings (re-encode comparison), so signature segments
+    like sig+"==" or sig+"!!" cannot alias a valid signature.
+    """
+    if len(segment) % 4 == 1:
+        raise ValueError("invalid base64url length")
+    padded = segment.translate(_TO_STD_B64) + "=" * (-len(segment) % 4)
+    decoded = base64.b64decode(padded, validate=True)
+    if _b64url_encode(decoded) != segment:
+        raise ValueError("non-canonical base64url")
+    return decoded
 
 
 def jwt_encode(payload: dict, secret: str) -> str:

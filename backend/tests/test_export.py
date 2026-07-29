@@ -68,6 +68,23 @@ async def test_companies_csv(client, register, make_group, make_company, make_po
     assert any("TechCorp" in line and "fintech;remote" in line for line in lines[1:])
 
 
+async def test_csv_formula_injection_neutralized(client, register, make_group, make_company):
+    import csv
+    import io
+
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    hostile_name = "=cmd|' /C calc'!A0"
+    await make_company(account["headers"], group["id"], name=hostile_name)
+
+    resp = await client.get(
+        f"/api/groups/{group['id']}/export/companies.csv", headers=account["headers"]
+    )
+    assert resp.status_code == 200
+    rows = list(csv.reader(io.StringIO(resp.text)))
+    assert rows[1][0] == "'" + hostile_name  # quote prefix defuses the formula
+
+
 async def test_portals_csv(client, register, make_group, make_company, make_portal):
     account, group = await _seed(client, register, make_group, make_company, make_portal)
     resp = await client.get(

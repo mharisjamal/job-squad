@@ -119,7 +119,8 @@ export interface PortalStatusRow {
   status: PortalMemberStatus;
   rating: number | null;
   notes: string | null;
-  updated_at: string;
+  // null on the response to a "none" upsert (row deleted).
+  updated_at: string | null;
 }
 
 export interface PortalStats {

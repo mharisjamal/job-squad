@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Dialog } from "./ui/Dialog";
+import { normalizeUrl } from "../lib/format";
 import type { Company, CompanyDetail, CompanyPayload } from "../types/api";
 
 interface Props {
@@ -42,8 +43,8 @@ export function CompanyFormDialog({ open, onClose, title, initial, busy, error, 
     setLocalError(null);
     onSubmit({
       name: name.trim(),
-      website: website.trim() || null,
-      careers_url: careersUrl.trim() || null,
+      website: normalizeUrl(website) || null,
+      careers_url: normalizeUrl(careersUrl) || null,
       location: location.trim() || null,
       tags: tags
         .split(",")

@@ -103,6 +103,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
+      aria-label={`${label} column`}
       className={clsx(
         "flex w-64 shrink-0 flex-col rounded-lg bg-canvas",
         isOver ? "border-2 border-dashed border-muted/60" : "border border-line",

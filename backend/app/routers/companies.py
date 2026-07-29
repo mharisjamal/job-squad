@@ -1,6 +1,6 @@
 """Company endpoints: list with filters, create, detail, patch, delete."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,11 @@ from ..schemas import (
 )
 
 router = APIRouter(tags=["companies"])
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards (and the escape char itself) in user input."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def _company_extras(
@@ -76,7 +81,7 @@ async def _serialize_one(session: AsyncSession, company: Company) -> dict:
 @router.get("/groups/{gid}/companies")
 async def list_companies(
     gid: int,
-    q: str | None = None,
+    q: str | None = Query(default=None, max_length=200),
     tag: str | None = None,
     status: str | None = None,
     include_archived: bool = False,
@@ -92,10 +97,10 @@ async def list_companies(
     if not include_archived:
         query = query.where(Company.archived.is_(False))
     if q:
-        needle = f"%{q.strip().lower()}%"
+        needle = f"%{_escape_like(q.strip().lower())}%"
         query = query.where(
-            func.lower(Company.name).like(needle)
-            | func.lower(func.coalesce(Company.location, "")).like(needle)
+            func.lower(Company.name).like(needle, escape="\\")
+            | func.lower(func.coalesce(Company.location, "")).like(needle, escape="\\")
         )
     if status:
         my_app = exists().where(

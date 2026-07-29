@@ -28,19 +28,3 @@ export function StatusBadge({
     </span>
   );
 }
-
-export function StatusDot({
-  status,
-  className,
-}: {
-  status: ApplicationStatus;
-  className?: string;
-}) {
-  return (
-    <span
-      className={clsx("inline-block h-2 w-2 rounded-full", className)}
-      style={{ backgroundColor: statusMeta(status).dot }}
-      aria-hidden
-    />
-  );
-}

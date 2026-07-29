@@ -16,6 +16,7 @@ import { Avatar } from "../components/ui/MemberChip";
 import { EmptyState, ErrorState } from "../components/ui/EmptyState";
 import { Skeleton } from "../components/ui/Spinner";
 import { PORTAL_STATUSES, portalStatusLabel } from "../config/statuses";
+import { normalizeUrl, safeHref } from "../lib/format";
 import { ApiError } from "../lib/api";
 import type { Portal, PortalMemberStatus, PortalPayload } from "../types/api";
 
@@ -178,7 +179,7 @@ function PortalFormDialog({
       return;
     }
     setLocalError(null);
-    onSubmit({ name: name.trim(), url: url.trim() || null, notes: notes.trim() || null });
+    onSubmit({ name: name.trim(), url: normalizeUrl(url) || null, notes: notes.trim() || null });
   };
 
   const shownError = localError ?? error;
@@ -301,13 +302,14 @@ export default function Portals() {
           {portals.data.map((p) => {
             const canDelete =
               user != null && (p.created_by === user.id || group.owner_id === user.id);
+            const portalHref = safeHref(p.url);
             return (
               <div key={p.id} className="card flex flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    {p.url ? (
+                    {portalHref ? (
                       <a
-                        href={p.url}
+                        href={portalHref}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 text-base font-semibold text-ink transition-colors duration-150 ease-out hover:underline"
@@ -317,6 +319,11 @@ export default function Portals() {
                       </a>
                     ) : (
                       <span className="text-base font-semibold text-ink">{p.name}</span>
+                    )}
+                    {p.url && !portalHref && (
+                      <span className="block truncate font-mono text-[11px] text-muted/80">
+                        {p.url}
+                      </span>
                     )}
                     <p className="mt-0.5 font-mono text-xs text-muted">{effectivenessLine(p)}</p>
                   </div>

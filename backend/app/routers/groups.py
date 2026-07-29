@@ -3,12 +3,13 @@
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..activity import record
 from ..deps import get_current_user, get_group_for_member, get_session
-from ..models import Group, GroupMember, User
+from ..models import Application, Company, Group, GroupMember, Portal, PortalStatus, User
 from ..schemas import (
     GroupCreateIn,
     GroupJoinIn,
@@ -115,22 +116,30 @@ async def join_group(
     group = await session.scalar(select(Group).where(Group.invite_code == code))
     if group is None:
         raise HTTPException(status_code=404, detail="Unknown invite code")
+    group_id = group.id
     member = await session.scalar(
         select(GroupMember).where(
-            GroupMember.group_id == group.id, GroupMember.user_id == user.id
+            GroupMember.group_id == group_id, GroupMember.user_id == user.id
         )
     )
     if member is None:
-        session.add(GroupMember(group_id=group.id, user_id=user.id, role="member"))
-        await record(
-            session,
-            request.app.state.broker,
-            group_id=group.id,
-            user=user,
-            type_="member_joined",
-        )
-        await session.commit()
-    return serialize_group(group, member_count=await _member_count(session, group.id))
+        session.add(GroupMember(group_id=group_id, user_id=user.id, role="member"))
+        try:
+            await record(
+                session,
+                request.app.state.broker,
+                group_id=group_id,
+                user=user,
+                type_="member_joined",
+            )
+            await session.commit()
+        except IntegrityError:
+            # Concurrent duplicate join: the other request won; treat as joined.
+            await session.rollback()
+            group = await session.get(Group, group_id)
+            if group is None:
+                raise HTTPException(status_code=404, detail="Unknown invite code") from None
+    return serialize_group(group, member_count=await _member_count(session, group_id))
 
 
 @router.post("/groups/{gid}/leave")
@@ -139,21 +148,42 @@ async def leave_group(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    group, member = await get_group_for_member(session, gid, user)
-    others = await session.scalar(
-        select(func.count())
-        .select_from(GroupMember)
-        .where(GroupMember.group_id == gid, GroupMember.user_id != user.id)
+    _, member = await get_group_for_member(session, gid, user)
+    others = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GroupMember)
+            .where(GroupMember.group_id == gid, GroupMember.user_id != user.id)
+        )
+        or 0
     )
-    if member.role == "owner" and int(others or 0) > 0:
+    if others == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You are the last member. Leaving would abandon the group, "
+                "and group deletion is not supported yet."
+            ),
+        )
+    if member.role == "owner":
         raise HTTPException(
             status_code=400, detail="Owner cannot leave while other members remain"
         )
-    if int(others or 0) == 0:
-        # Last member left: remove the group and its data (FK cascades the membership).
-        await session.delete(group)
-    else:
-        await session.delete(member)
+    # The leaver's personal pipeline goes with them; shared data, their
+    # comments and their activity rows stay (conversation history).
+    await session.execute(
+        delete(Application).where(
+            Application.user_id == user.id,
+            Application.company_id.in_(select(Company.id).where(Company.group_id == gid)),
+        )
+    )
+    await session.execute(
+        delete(PortalStatus).where(
+            PortalStatus.user_id == user.id,
+            PortalStatus.portal_id.in_(select(Portal.id).where(Portal.group_id == gid)),
+        )
+    )
+    await session.delete(member)
     await session.commit()
     return {"ok": True}
 

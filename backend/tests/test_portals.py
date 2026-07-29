@@ -72,6 +72,42 @@ async def test_status_upsert_and_rating_bounds(client, register, make_group, mak
     assert resp.status_code == 422
 
 
+async def test_status_only_put_preserves_rating_and_notes(
+    client, register, make_group, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    portal = await make_portal(account["headers"], group["id"])
+    await client.put(
+        f"/api/portals/{portal['id']}/status",
+        json={"status": "signed_up", "rating": 4, "notes": "decent"},
+        headers=account["headers"],
+    )
+
+    # Merge semantics: {"status": ...} alone must not wipe rating/notes.
+    resp = await client.put(
+        f"/api/portals/{portal['id']}/status",
+        json={"status": "active"},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["status"] == "active"
+    assert row["rating"] == 4
+    assert row["notes"] == "decent"
+    assert row["updated_at"] is not None
+
+    # An explicit null clears just that field.
+    resp = await client.put(
+        f"/api/portals/{portal['id']}/status",
+        json={"status": "active", "rating": None},
+        headers=account["headers"],
+    )
+    row = resp.json()
+    assert row["rating"] is None
+    assert row["notes"] == "decent"
+
+
 async def test_status_none_deletes_row(client, register, make_group, make_portal):
     account = await register(username="haris")
     group = await make_group(account["headers"])

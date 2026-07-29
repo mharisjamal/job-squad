@@ -5,17 +5,22 @@ from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
-async def client(tmp_path, monkeypatch):
+async def asgi_app(tmp_path, monkeypatch):
     monkeypatch.setenv("JOBSQUAD_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("JOBSQUAD_SECRET", "test-secret-not-for-production")
     monkeypatch.setenv("JOBSQUAD_TOKEN_TTL_HOURS", "1")
     from app.main import create_app
 
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as http:
-            yield http
+    application = create_app()
+    async with application.router.lifespan_context(application):
+        yield application
+
+
+@pytest.fixture
+async def client(asgi_app):
+    transport = ASGITransport(app=asgi_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        yield http
 
 
 @pytest.fixture

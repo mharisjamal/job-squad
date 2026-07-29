@@ -2,9 +2,9 @@
 
 import re
 from datetime import UTC, date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from .models import (
     Activity,
@@ -25,11 +25,18 @@ PortalMemberStatus = Literal["none", "signed_up", "active", "abandoned"]
 
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,30}$")
 
+# Size caps for user-supplied text (defense in depth with the 1 MB body cap).
+NAME_MAX = 120
+URL_MAX = 2000
+NOTES_MAX = 10000
+TAGS_MAX_ITEMS = 20
+TagStr = Annotated[str, StringConstraints(max_length=50)]
+
 
 class RegisterIn(BaseModel):
-    username: str
-    display_name: str
-    password: str = Field(min_length=8)
+    username: str = Field(max_length=200)
+    display_name: str = Field(max_length=NAME_MAX)
+    password: str = Field(min_length=8, max_length=200)
 
     @field_validator("username")
     @classmethod
@@ -49,12 +56,12 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=200)
+    password: str = Field(max_length=200)
 
 
 class GroupCreateIn(BaseModel):
-    name: str
+    name: str = Field(max_length=NAME_MAX)
 
     @field_validator("name")
     @classmethod
@@ -66,7 +73,7 @@ class GroupCreateIn(BaseModel):
 
 
 class GroupJoinIn(BaseModel):
-    invite_code: str
+    invite_code: str = Field(max_length=20)
 
 
 class GroupRenameIn(GroupCreateIn):
@@ -74,12 +81,12 @@ class GroupRenameIn(GroupCreateIn):
 
 
 class CompanyCreateIn(BaseModel):
-    name: str
-    website: str | None = None
-    careers_url: str | None = None
-    location: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = None
+    name: str = Field(max_length=NAME_MAX)
+    website: str | None = Field(default=None, max_length=URL_MAX)
+    careers_url: str | None = Field(default=None, max_length=URL_MAX)
+    location: str | None = Field(default=None, max_length=NAME_MAX)
+    tags: list[TagStr] = Field(default_factory=list, max_length=TAGS_MAX_ITEMS)
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
     @field_validator("name")
     @classmethod
@@ -91,12 +98,12 @@ class CompanyCreateIn(BaseModel):
 
 
 class CompanyPatchIn(BaseModel):
-    name: str | None = None
-    website: str | None = None
-    careers_url: str | None = None
-    location: str | None = None
-    tags: list[str] | None = None
-    notes: str | None = None
+    name: str | None = Field(default=None, max_length=NAME_MAX)
+    website: str | None = Field(default=None, max_length=URL_MAX)
+    careers_url: str | None = Field(default=None, max_length=URL_MAX)
+    location: str | None = Field(default=None, max_length=NAME_MAX)
+    tags: list[TagStr] | None = Field(default=None, max_length=TAGS_MAX_ITEMS)
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
     archived: bool | None = None
 
 
@@ -105,14 +112,14 @@ class ApplicationPutIn(BaseModel):
     applied_via_portal_id: int | None = None
     applied_at: date | None = None
     follow_up_at: date | None = None
-    url: str | None = None
-    notes: str | None = None
+    url: str | None = Field(default=None, max_length=URL_MAX)
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
 class PortalCreateIn(BaseModel):
-    name: str
-    url: str | None = None
-    notes: str | None = None
+    name: str = Field(max_length=NAME_MAX)
+    url: str | None = Field(default=None, max_length=URL_MAX)
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
     @field_validator("name")
     @classmethod
@@ -124,19 +131,19 @@ class PortalCreateIn(BaseModel):
 
 
 class PortalPatchIn(BaseModel):
-    name: str | None = None
-    url: str | None = None
-    notes: str | None = None
+    name: str | None = Field(default=None, max_length=NAME_MAX)
+    url: str | None = Field(default=None, max_length=URL_MAX)
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
 class PortalStatusPutIn(BaseModel):
     status: PortalMemberStatus
     rating: int | None = Field(default=None, ge=1, le=5)
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
 class CommentIn(BaseModel):
-    body: str
+    body: str = Field(max_length=NOTES_MAX)
 
     @field_validator("body")
     @classmethod

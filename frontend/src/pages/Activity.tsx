@@ -35,15 +35,11 @@ export default function ActivityPage() {
           <h1 className="text-xl font-semibold tracking-tight text-ink">Activity</h1>
           <p className="text-sm text-muted">Everything your squad has been up to.</p>
         </div>
-        <span
-          className={clsx(
-            "flex items-center gap-1.5 rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[11px] text-muted",
-          )}
-        >
+        <span className="flex items-center gap-1.5 rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[11px] text-muted">
           <span
             className={clsx(
               "h-1.5 w-1.5 rounded-full",
-              sseConnected ? "bg-[#059669]" : "bg-muted/50",
+              sseConnected ? "bg-status-offer-dot" : "bg-muted/50",
             )}
             aria-hidden
           />

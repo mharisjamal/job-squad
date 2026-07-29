@@ -34,7 +34,7 @@ export function ErrorState({
 }) {
   return (
     <div className="card flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-      <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#FEF2F2]">
+      <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-danger/10">
         <AlertTriangle className="h-5 w-5 text-danger" aria-hidden />
       </div>
       <p className="max-w-sm text-sm text-ink">{message}</p>

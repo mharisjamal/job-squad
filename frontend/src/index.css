@@ -2,13 +2,128 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Theme tokens. Values are space-separated RGB channels so Tailwind can apply
+ * opacity modifiers (rgb(var(--x) / <alpha-value>)). Dark is the default and
+ * lives on :root; light is an explicit override via data-theme="light".
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: elevation is a lightness step, never a shadow. */
+  --canvas: 15 18 22; /* #0F1216 app background */
+  --paper: 23 27 33; /* #171B21 cards */
+  --raised: 30 35 42; /* #1E232A dialogs, popovers, menus */
+  --hover: 27 32 40; /* #1B2028 row and ghost hover */
+
+  /* Borders sit LIGHTER than the surface they divide, never darker. */
+  --line: 38 44 52; /* #262C34 */
+  --line-strong: 51 58 68; /* #333A44 */
+
+  /* Text: off-white, never pure white (halation on near-black). */
+  --ink: 231 234 238; /* #E7EAEE */
+  --ink-hover: 242 245 248;
+  --muted: 152 162 176; /* #98A2B0 */
+
+  /* Meaning-only color. */
+  --focus: 106 161 255; /* #6AA1FF links + focus rings */
+  --danger: 248 113 113; /* #F87171 */
+
+  /* Modal veil: always darkens, in both modes. */
+  --scrim: 8 10 13;
+
+  /* Avatars */
+  --avatar-s: 40%;
+  --avatar-l: 52%;
+
+  /* Status trios, re-derived for dark (lighter, lower chroma on dark tints). */
+  --status-saved-text: 168 179 194;
+  --status-saved-bg: 26 31 38;
+  --status-saved-dot: 138 148 163;
+
+  --status-applied-text: 127 170 248;
+  --status-applied-bg: 19 28 43;
+  --status-applied-dot: 91 141 239;
+
+  --status-assessment-text: 182 156 245;
+  --status-assessment-bg: 30 26 46;
+  --status-assessment-dot: 155 123 232;
+
+  --status-interview-text: 229 165 90;
+  --status-interview-bg: 42 32 21;
+  --status-interview-dot: 217 144 60;
+
+  --status-offer-text: 87 192 138;
+  --status-offer-bg: 18 36 28;
+  --status-offer-dot: 63 168 117;
+
+  --status-rejected-text: 240 133 133;
+  --status-rejected-bg: 42 23 25;
+  --status-rejected-dot: 224 108 108;
+
+  --status-ghosted-text: 154 160 168;
+  --status-ghosted-bg: 28 30 34;
+  --status-ghosted-dot: 124 131 140;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: 247 247 245; /* #F7F7F5 */
+  --paper: 255 255 255; /* #FFFFFF */
+  --raised: 255 255 255;
+  --hover: 250 250 249; /* #FAFAF9 */
+
+  --line: 228 228 225; /* #E4E4E1 */
+  --line-strong: 214 214 210; /* #D6D6D2 */
+
+  --ink: 26 29 33; /* #1A1D21 */
+  --ink-hover: 46 51 56;
+  --muted: 92 100 112; /* #5C6470 */
+
+  --focus: 37 99 235; /* #2563EB */
+  --danger: 220 38 38; /* #DC2626 */
+
+  --scrim: 26 29 33;
+
+  --avatar-s: 45%;
+  --avatar-l: 42%;
+
+  --status-saved-text: 71 85 105;
+  --status-saved-bg: 241 245 249;
+  --status-saved-dot: 100 116 139;
+
+  --status-applied-text: 29 78 216;
+  --status-applied-bg: 239 246 255;
+  --status-applied-dot: 37 99 235;
+
+  --status-assessment-text: 109 40 217;
+  --status-assessment-bg: 245 243 255;
+  --status-assessment-dot: 124 58 237;
+
+  --status-interview-text: 180 83 9;
+  --status-interview-bg: 255 251 235;
+  --status-interview-dot: 217 119 6;
+
+  --status-offer-text: 4 120 87;
+  --status-offer-bg: 236 253 245;
+  --status-offer-dot: 5 150 105;
+
+  --status-rejected-text: 185 28 28;
+  --status-rejected-bg: 254 242 242;
+  --status-rejected-dot: 220 38 38;
+
+  --status-ghosted-text: 82 82 91;
+  --status-ghosted-bg: 244 244 245;
+  --status-ghosted-dot: 113 113 122;
+}
+
 @layer base {
   html {
     @apply bg-canvas text-ink antialiased;
-    color-scheme: light;
   }
   body {
-    @apply font-sans text-sm leading-relaxed;
+    @apply bg-canvas font-sans text-sm leading-relaxed;
   }
   h1,
   h2,
@@ -23,9 +138,12 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: #d6d6d2;
+    background: rgb(var(--line-strong));
     border-radius: 8px;
-    border: 2px solid #f7f7f5;
+    border: 2px solid rgb(var(--canvas));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--muted) / 0.6);
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -41,14 +159,15 @@
       text-sm font-medium transition-colors duration-150 ease-out
       disabled:pointer-events-none disabled:opacity-50;
   }
+  /* Primary inverts per mode: light surface + dark text in dark mode. */
   .btn-primary {
-    @apply btn bg-ink text-white hover:bg-[#2E3338] active:bg-[#101215];
+    @apply btn bg-ink text-canvas hover:bg-ink-hover;
   }
   .btn-ghost {
-    @apply btn border border-line bg-paper text-ink hover:bg-hover active:bg-pill;
+    @apply btn border border-line bg-paper text-ink hover:bg-hover;
   }
   .btn-danger {
-    @apply btn bg-danger text-white hover:bg-[#B91C1C] active:bg-[#991B1B];
+    @apply btn bg-danger text-canvas hover:opacity-90;
   }
   .input {
     @apply w-full rounded-md border border-line bg-paper px-3 py-1.5 text-sm text-ink
@@ -60,10 +179,11 @@
   }
   .nav-item {
     @apply flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-muted
-      transition-colors duration-150 ease-out hover:bg-pill/70 hover:text-ink;
+      transition-colors duration-150 ease-out hover:bg-hover hover:text-ink;
   }
+  /* Active nav is a subtle raised pill, not a colored bar. */
   .nav-item-active {
-    @apply bg-pill font-medium text-ink hover:bg-pill;
+    @apply bg-raised font-medium text-ink hover:bg-raised;
   }
   .link {
     @apply text-focus hover:underline;

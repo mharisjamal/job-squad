@@ -59,7 +59,7 @@ export function CopyChip({ value, className }: { value: string; className?: stri
         aria-label={`Copy invite code ${value}`}
       >
         {copied ? (
-          <Check className="h-3 w-3 text-status-offer" aria-hidden />
+          <Check className="h-3 w-3 text-status-offer-text" aria-hidden />
         ) : (
           <Copy className="h-3 w-3" aria-hidden />
         )}

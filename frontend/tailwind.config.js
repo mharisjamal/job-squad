@@ -1,27 +1,49 @@
 /** @type {import('tailwindcss').Config} */
+
+// Every color token resolves to a CSS variable defined in src/index.css.
+// The rgb(var(--x) / <alpha-value>) form keeps Tailwind opacity modifiers
+// (bg-ink/60, text-muted/80) working. No component may hardcode a hex.
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        paper: "#FFFFFF",
-        canvas: "#F7F7F5",
-        ink: "#1A1D21",
-        muted: "#5C6470",
-        line: "#E4E4E1",
-        focus: "#2563EB",
-        danger: "#DC2626",
-        hover: "#FAFAF9",
-        pill: "#EFEFED",
+        canvas: token("canvas"),
+        paper: token("paper"),
+        raised: token("raised"),
+        hover: token("hover"),
+        line: token("line"),
+        "line-strong": token("line-strong"),
+        ink: token("ink"),
+        "ink-hover": token("ink-hover"),
+        muted: token("muted"),
+        focus: token("focus"),
+        danger: token("danger"),
+        scrim: token("scrim"),
         status: {
-          // text colors
-          saved: "#475569",
-          applied: "#1D4ED8",
-          assessment: "#6D28D9",
-          interview: "#B45309",
-          offer: "#047857",
-          rejected: "#B91C1C",
-          ghosted: "#52525B",
+          "saved-text": token("status-saved-text"),
+          "saved-bg": token("status-saved-bg"),
+          "saved-dot": token("status-saved-dot"),
+          "applied-text": token("status-applied-text"),
+          "applied-bg": token("status-applied-bg"),
+          "applied-dot": token("status-applied-dot"),
+          "assessment-text": token("status-assessment-text"),
+          "assessment-bg": token("status-assessment-bg"),
+          "assessment-dot": token("status-assessment-dot"),
+          "interview-text": token("status-interview-text"),
+          "interview-bg": token("status-interview-bg"),
+          "interview-dot": token("status-interview-dot"),
+          "offer-text": token("status-offer-text"),
+          "offer-bg": token("status-offer-bg"),
+          "offer-dot": token("status-offer-dot"),
+          "rejected-text": token("status-rejected-text"),
+          "rejected-bg": token("status-rejected-bg"),
+          "rejected-dot": token("status-rejected-dot"),
+          "ghosted-text": token("status-ghosted-text"),
+          "ghosted-bg": token("status-ghosted-bg"),
+          "ghosted-dot": token("status-ghosted-dot"),
         },
       },
       fontFamily: {
@@ -33,9 +55,9 @@ export default {
         lg: "10px",
       },
       boxShadow: {
-        // The only shadow in the system: dialogs and popovers.
-        pop: "0 1px 2px rgba(26,29,33,0.06), 0 8px 24px rgba(26,29,33,0.12)",
-        drag: "0 2px 6px rgba(26,29,33,0.10), 0 10px 24px rgba(26,29,33,0.14)",
+        // Elevation is a surface lightness step; dialogs keep one subtle shadow.
+        pop: "0 1px 2px rgb(0 0 0 / 0.16), 0 8px 24px rgb(0 0 0 / 0.24)",
+        drag: "0 2px 6px rgb(0 0 0 / 0.20), 0 10px 24px rgb(0 0 0 / 0.28)",
       },
       fontSize: {
         small: ["12.5px", { lineHeight: "1.45" }],

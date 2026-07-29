@@ -43,7 +43,7 @@ export function Menu({
       {open && (
         <div
           role="menu"
-          className="overlay-in absolute right-0 z-40 mt-1.5 w-56 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-pop"
+          className="overlay-in absolute right-0 z-40 mt-1.5 w-56 overflow-hidden rounded-lg border border-line bg-raised py-1 shadow-pop"
         >
           {children(() => setOpen(false))}
         </div>

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./hooks/useAuth";
 import { PageSpinner } from "./components/ui/Spinner";
 import Auth from "./pages/Auth";
+import AuthCallback from "./pages/AuthCallback";
 import Groups from "./pages/Groups";
 import Dashboard from "./pages/Dashboard";
 import Companies from "./pages/Companies";
@@ -27,6 +28,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/auth" element={<Auth />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="*" element={<Navigate to="/auth" replace state={{ from: location }} />} />
       </Routes>
     );
@@ -35,6 +37,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/auth" element={<Navigate to="/" replace />} />
+      {/* Stays mounted when adopting an OAuth token flips the app to authed. */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/" element={<Groups />} />
       <Route path="/g/:gid" element={<GroupShell />}>
         <Route index element={<Dashboard />} />

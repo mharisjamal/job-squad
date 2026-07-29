@@ -413,7 +413,7 @@ export default function CompanyDetail() {
           ) : (
             <div className="space-y-3">
               {c.applications.map((a) => (
-                <div key={a.id} className="rounded-lg border border-line bg-canvas/60 p-4">
+                <div key={a.id} className="rounded-lg border border-line bg-canvas p-4">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <Avatar username={a.username} displayName={a.display_name} size="md" />

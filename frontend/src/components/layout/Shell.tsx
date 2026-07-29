@@ -10,7 +10,9 @@ import {
   LayoutDashboard,
   LogOut,
   Menu as MenuIcon,
+  Moon,
   Repeat,
+  Sun,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -18,6 +20,7 @@ import type { GroupDetail } from "../../types/api";
 import { useGroupDetail } from "../../hooks/useGroups";
 import { SseStatusContext, useActivitySse } from "../../hooks/useActivity";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme } from "../../hooks/useTheme";
 import { downloadUrl } from "../../lib/api";
 import { PageSpinner } from "../ui/Spinner";
 import { ErrorState } from "../ui/EmptyState";
@@ -52,6 +55,7 @@ export function GroupShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { theme, toggle: toggleTheme } = useTheme();
   const detail = useGroupDetail(gid);
   const sseConnected = useActivitySse(gid);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -124,7 +128,7 @@ export function GroupShell() {
           <span
             className={clsx(
               "h-1.5 w-1.5 rounded-full",
-              sseConnected ? "bg-[#059669]" : "bg-muted/40",
+              sseConnected ? "bg-status-offer-dot" : "bg-muted/40",
             )}
             aria-hidden
           />
@@ -150,7 +154,7 @@ export function GroupShell() {
           {drawerOpen && (
             <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
               <div
-                className="overlay-in absolute inset-0 bg-ink/30"
+                className="overlay-in absolute inset-0 bg-scrim/60"
                 onClick={() => setDrawerOpen(false)}
               />
               <aside className="overlay-in absolute inset-y-0 left-0 w-64 border-r border-line bg-canvas shadow-pop">
@@ -239,6 +243,19 @@ export function GroupShell() {
                         >
                           <Repeat className="h-4 w-4 text-muted" aria-hidden />
                           Switch group
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            close();
+                            toggleTheme();
+                          }}
+                        >
+                          {theme === "dark" ? (
+                            <Sun className="h-4 w-4 text-muted" aria-hidden />
+                          ) : (
+                            <Moon className="h-4 w-4 text-muted" aria-hidden />
+                          )}
+                          {theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                         </MenuItem>
                         <MenuItem
                           danger

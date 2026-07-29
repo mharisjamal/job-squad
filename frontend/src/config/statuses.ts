@@ -3,23 +3,34 @@ import type { ApplicationStatus, PortalMemberStatus } from "../types/api";
 export interface StatusMeta {
   value: ApplicationStatus;
   label: string;
-  /** Badge text color. */
+  /** Badge text color (CSS value referencing the themed variable). */
   text: string;
   /** Badge tint background. */
   tint: string;
-  /** Leading dot / ring / column marker color. */
+  /** Leading dot / avatar ring / column marker color. */
   dot: string;
 }
 
-// Frozen order (kanban column order) and colors from the plan, section 5.
+const color = (name: string) => `rgb(var(--status-${name}))`;
+
+const meta = (value: ApplicationStatus, label: string): StatusMeta => ({
+  value,
+  label,
+  text: color(`${value}-text`),
+  tint: color(`${value}-bg`),
+  dot: color(`${value}-dot`),
+});
+
+// Frozen order (kanban column order) and labels from the plan, section 5.
+// The color values are per-theme CSS variables, never hexes.
 export const STATUSES: StatusMeta[] = [
-  { value: "saved", label: "Saved", text: "#475569", tint: "#F1F5F9", dot: "#64748B" },
-  { value: "applied", label: "Applied", text: "#1D4ED8", tint: "#EFF6FF", dot: "#2563EB" },
-  { value: "assessment", label: "Assessment", text: "#6D28D9", tint: "#F5F3FF", dot: "#7C3AED" },
-  { value: "interview", label: "Interview", text: "#B45309", tint: "#FFFBEB", dot: "#D97706" },
-  { value: "offer", label: "Offer", text: "#047857", tint: "#ECFDF5", dot: "#059669" },
-  { value: "rejected", label: "Rejected", text: "#B91C1C", tint: "#FEF2F2", dot: "#DC2626" },
-  { value: "ghosted", label: "Ghosted", text: "#52525B", tint: "#F4F4F5", dot: "#71717A" },
+  meta("saved", "Saved"),
+  meta("applied", "Applied"),
+  meta("assessment", "Assessment"),
+  meta("interview", "Interview"),
+  meta("offer", "Offer"),
+  meta("rejected", "Rejected"),
+  meta("ghosted", "Ghosted"),
 ];
 
 export const STATUS_META: Record<ApplicationStatus, StatusMeta> = Object.fromEntries(

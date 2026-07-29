@@ -91,7 +91,7 @@ export default function Groups() {
         {user && (
           <Menu
             trigger={() => (
-              <span className="flex items-center gap-2 rounded-md p-1 pr-2 transition-colors duration-150 ease-out hover:bg-pill/70">
+              <span className="flex items-center gap-2 rounded-md p-1 pr-2 transition-colors duration-150 ease-out hover:bg-hover">
                 <Avatar username={user.username} displayName={user.display_name} size="md" />
                 <span className="hidden text-sm font-medium text-ink sm:inline">
                   {user.display_name}

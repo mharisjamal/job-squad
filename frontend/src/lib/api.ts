@@ -23,6 +23,22 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Public credential endpoints where 401 is a normal answer ("wrong password",
+ * "wrong code"), not an expired session. These must surface the server's
+ * message to the form instead of triggering a sign-out redirect.
+ */
+const PUBLIC_AUTH_PATHS = [
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/config",
+];
+
+function isPublicAuthPath(path: string): boolean {
+  const clean = path.split("?")[0];
+  return PUBLIC_AUTH_PATHS.some((p) => clean === p || clean.startsWith(`${p}/`));
+}
+
 function handleUnauthorized(): void {
   clearToken();
   if (window.location.pathname !== "/auth") {
@@ -53,7 +69,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(path, { ...init, headers });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !isPublicAuthPath(path)) {
     handleUnauthorized();
     throw new ApiError(401, "Session expired. Please sign in again.");
   }

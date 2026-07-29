@@ -20,7 +20,9 @@ import { normalizeUrl, safeHref } from "../lib/format";
 import { ApiError } from "../lib/api";
 import type { Portal, PortalMemberStatus, PortalPayload } from "../types/api";
 
-const STAR_COLOR = "#D97706";
+// Ratings borrow the interview amber: the one warm signal in the system.
+const STAR_ON = "rgb(var(--status-interview-dot))";
+const STAR_OFF = "rgb(var(--line-strong))";
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -55,7 +57,7 @@ function StarRating({
           >
             <Star
               className="h-4 w-4"
-              style={{ color: filled ? STAR_COLOR : "#C9CDD3" }}
+              style={{ color: filled ? STAR_ON : STAR_OFF }}
               fill={filled ? "currentColor" : "none"}
               aria-hidden
             />
@@ -340,7 +342,7 @@ export default function Portals() {
                     </button>
                     {canDelete && (
                       <button
-                        className="rounded-md p-1.5 text-muted transition-colors duration-150 ease-out hover:bg-[#FEF2F2] hover:text-danger"
+                        className="rounded-md p-1.5 text-muted transition-colors duration-150 ease-out hover:bg-danger/10 hover:text-danger"
                         onClick={() => setDeleteTarget(p)}
                         aria-label={`Delete ${p.name}`}
                       >
@@ -367,10 +369,7 @@ export default function Portals() {
                         <Avatar username={s.username} displayName={s.display_name} size="sm" />
                         {portalStatusLabel(s.status)}
                         {s.rating != null && (
-                          <span
-                            className="flex items-center gap-0.5"
-                            style={{ color: STAR_COLOR }}
-                          >
+                          <span className="flex items-center gap-0.5" style={{ color: STAR_ON }}>
                             <Star className="h-3 w-3" fill="currentColor" aria-hidden />
                             {s.rating}
                           </span>

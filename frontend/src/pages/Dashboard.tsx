@@ -230,7 +230,7 @@ export default function Dashboard() {
                     <span className="flex shrink-0 items-center gap-2">
                       <StatusBadge status={a.status} />
                       <span
-                        className={`font-mono text-xs ${days <= 1 ? "text-status-interview" : "text-muted"}`}
+                        className={`font-mono text-xs ${days <= 1 ? "text-status-interview-text" : "text-muted"}`}
                       >
                         {days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days}d`}
                       </span>

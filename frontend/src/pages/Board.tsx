@@ -32,7 +32,9 @@ function FollowUpBadge({ followUpAt }: { followUpAt: string | null }) {
     <span
       className={clsx(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px]",
-        urgent ? "bg-[#FFFBEB] text-status-interview" : "bg-canvas text-muted",
+        urgent
+          ? "bg-status-interview-bg text-status-interview-text"
+          : "bg-canvas text-muted",
       )}
     >
       <CalendarClock className="h-3 w-3" aria-hidden />

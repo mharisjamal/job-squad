@@ -96,12 +96,15 @@ export function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-/** Deterministic avatar hue from a username. */
+/**
+ * Deterministic avatar hue from a username. Saturation and lightness come from
+ * theme variables so avatars re-tune themselves in dark and light mode.
+ */
 export function avatarColor(username: string): string {
   let hash = 0;
   for (let i = 0; i < username.length; i++) {
     hash = (hash * 31 + username.charCodeAt(i)) | 0;
   }
   const hue = ((hash % 360) + 360) % 360;
-  return `hsl(${hue}, 45%, 42%)`;
+  return `hsl(${hue} var(--avatar-s) var(--avatar-l))`;
 }

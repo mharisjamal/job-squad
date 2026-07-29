@@ -50,10 +50,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             role="status"
-            className="overlay-in pointer-events-auto flex items-start gap-2.5 rounded-lg border border-line bg-paper p-3 shadow-pop"
+            className="overlay-in pointer-events-auto flex items-start gap-2.5 rounded-lg border border-line bg-raised p-3 shadow-pop"
           >
             {t.kind === "success" ? (
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-status-offer" aria-hidden />
+              <CheckCircle2
+                className="mt-0.5 h-4 w-4 shrink-0 text-status-offer-text"
+                aria-hidden
+              />
             ) : (
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden />
             )}

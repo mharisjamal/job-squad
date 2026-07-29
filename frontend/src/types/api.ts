@@ -22,8 +22,11 @@ export type ActivityType =
 
 export interface User {
   id: number;
+  /** Server-derived handle; never chosen by the user. Display fallback. */
   username: string;
   display_name: string;
+  email?: string | null;
+  avatar_url?: string | null;
 }
 
 export interface AuthResponse {
@@ -199,14 +202,39 @@ export interface GroupStats {
 // Request payloads
 
 export interface RegisterPayload {
-  username: string;
   display_name: string;
+  email: string;
   password: string;
 }
 
 export interface LoginPayload {
-  username: string;
+  /** Email or (legacy) username. */
+  identifier: string;
   password: string;
+}
+
+export type OAuthProvider = "google" | "github" | "linkedin";
+
+/** Public server capability probe: decides which signup flow the UI shows. */
+export interface AuthConfig {
+  otp_required: boolean;
+  providers: OAuthProvider[];
+}
+
+export interface RegisterStartRequest {
+  display_name: string;
+  email: string;
+  password: string;
+}
+
+export interface RegisterStartResponse {
+  ok: boolean;
+  resend_after_seconds: number;
+}
+
+export interface RegisterVerifyRequest {
+  email: string;
+  code: string;
 }
 
 export interface CompanyPayload {

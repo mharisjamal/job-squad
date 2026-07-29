@@ -43,7 +43,7 @@ export function Dialog({
 
   return createPortal(
     <div
-      className="overlay-in fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/30 p-4 pt-[8vh] sm:items-center sm:pt-4"
+      className="overlay-in fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim/60 p-4 pt-[8vh] sm:items-center sm:pt-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -53,7 +53,7 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`card w-full ${wide ? "max-w-2xl" : "max-w-md"} p-5 shadow-pop`}
+        className={`w-full rounded-lg border border-line bg-raised ${wide ? "max-w-2xl" : "max-w-md"} p-5 shadow-pop`}
       >
         <div className="mb-4 flex items-center justify-between gap-4">
           <h2 className="text-sm font-semibold text-ink">{title}</h2>

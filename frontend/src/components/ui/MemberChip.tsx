@@ -57,19 +57,17 @@ export function MemberChip({
       aria-label={title}
     >
       <span
-        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium"
+        className={clsx(
+          "inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium",
+          status ? "text-white" : "bg-paper text-muted",
+        )}
         style={
           status
             ? {
                 backgroundColor: avatarColor(username),
-                color: "#FFFFFF",
                 boxShadow: `0 0 0 2px ${statusMeta(status).dot}`,
               }
-            : {
-                backgroundColor: "#FFFFFF",
-                color: "#5C6470",
-                boxShadow: "0 0 0 2px #D6D6D2",
-              }
+            : { boxShadow: "0 0 0 2px rgb(var(--line-strong))" }
         }
       >
         {initials(displayName)}

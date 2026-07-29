@@ -1,0 +1,20 @@
+# runtime data (sqlite db, generated secret)
+data/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# node
+node_modules/
+dist/
+*.local
+
+# misc
+.env
+.DS_Store
+Thumbs.db
+temp/

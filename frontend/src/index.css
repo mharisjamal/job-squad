@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-canvas text-ink antialiased;
+    color-scheme: light;
+  }
+  body {
+    @apply font-sans text-sm leading-relaxed;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.01em;
+  }
+  *:focus-visible {
+    @apply outline-none ring-2 ring-focus ring-offset-2 ring-offset-canvas;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d6d6d2;
+    border-radius: 8px;
+    border: 2px solid #f7f7f5;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-line bg-paper;
+  }
+  .btn {
+    @apply inline-flex h-[34px] select-none items-center justify-center gap-1.5 rounded-md px-3.5
+      text-sm font-medium transition-colors duration-150 ease-out
+      disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-ink text-white hover:bg-[#2E3338] active:bg-[#101215];
+  }
+  .btn-ghost {
+    @apply btn border border-line bg-paper text-ink hover:bg-hover active:bg-pill;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white hover:bg-[#B91C1C] active:bg-[#991B1B];
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-paper px-3 py-1.5 text-sm text-ink
+      placeholder:text-muted/60 transition-colors duration-150 ease-out
+      focus:border-focus focus:outline-none focus:ring-2 focus:ring-focus/25;
+  }
+  .label {
+    @apply mb-1 block text-small font-medium text-muted;
+  }
+  .nav-item {
+    @apply flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-muted
+      transition-colors duration-150 ease-out hover:bg-pill/70 hover:text-ink;
+  }
+  .nav-item-active {
+    @apply bg-pill font-medium text-ink hover:bg-pill;
+  }
+  .link {
+    @apply text-focus hover:underline;
+  }
+}
+
+/* Dialog/popover motion only: quick fade, 140ms ease-out. */
+@layer utilities {
+  .overlay-in {
+    animation: overlay-in 140ms ease-out;
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

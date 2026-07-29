@@ -1,0 +1,1 @@
+"""JobSquad backend application package."""

@@ -117,17 +117,17 @@ Deletes: deleting a company cascades its applications + comments. Deleting a por
 
 ## 5. Enums and status colors (frozen)
 
-Application status (order matters, kanban column order):
+Application status (order matters, kanban column order). Status color is the ONLY vivid color in the UI; each status has a text color and a tint background (badge = tint bg + text color + leading dot, AA contrast):
 
-| value | label | color (hex) |
-|---|---|---|
-| `saved` | Saved | `#64748b` slate |
-| `applied` | Applied | `#3b82f6` blue |
-| `assessment` | Assessment | `#8b5cf6` violet |
-| `interview` | Interview | `#f59e0b` amber |
-| `offer` | Offer | `#10b981` emerald |
-| `rejected` | Rejected | `#ef4444` red |
-| `ghosted` | Ghosted | `#71717a` zinc |
+| value | label | text color | tint bg | dot |
+|---|---|---|---|---|
+| `saved` | Saved | `#475569` | `#F1F5F9` | `#64748B` |
+| `applied` | Applied | `#1D4ED8` | `#EFF6FF` | `#2563EB` |
+| `assessment` | Assessment | `#6D28D9` | `#F5F3FF` | `#7C3AED` |
+| `interview` | Interview | `#B45309` | `#FFFBEB` | `#D97706` |
+| `offer` | Offer | `#047857` | `#ECFDF5` | `#059669` |
+| `rejected` | Rejected | `#B91C1C` | `#FEF2F2` | `#DC2626` |
+| `ghosted` | Ghosted | `#52525B` | `#F4F4F5` | `#71717A` |
 
 Portal member status: `none` (no row), `signed_up`, `active`, `abandoned`.
 
@@ -182,7 +182,7 @@ GroupDetail     Group + {members: [{user_id, username, display_name, role, joine
 - `DELETE /api/companies/{cid}` -> `{ok: true}`. Poster or group owner only (403 otherwise).
 
 ### Applications (`routers/applications.py`)
-- `PUT /api/companies/{cid}/application` `{status, applied_via_portal_id?, applied_at?, follow_up_at?, url?, notes?}` -> `ApplicationFull`. Upserts MY application row. On status change (including create), record `application_status_changed`.
+- `PUT /api/companies/{cid}/application` `{status, applied_via_portal_id?, applied_at?, follow_up_at?, url?, notes?}` -> `ApplicationFull`. Upserts MY application row with **merge semantics**: only fields present in the request body are applied; an explicitly null field clears; an omitted field is left unchanged on an existing row (null on create). This lets lightweight callers (inline status select, kanban drag) send `{status}` alone without wiping notes/portal/dates. On status change (including create), record `application_status_changed`.
 - `DELETE /api/companies/{cid}/application` -> `{ok: true}`. Removes my row; records `application_removed`. 404 if none.
 - `GET /api/groups/{gid}/applications?user_id=&status=` -> `[ApplicationFull]`. `user_id` accepts an id or `me`. Sorted updated_at desc.
 
@@ -224,12 +224,17 @@ CSV via Python `csv` module (proper quoting). Tags joined with `;`. These endpoi
 
 ## 7. Frontend spec
 
-### Design system ("NightShift" theme, dark only)
-- Background `#0b0d12`, raised surface `#12151d`, border `#1f2430` (subtle), text `#e7e9ee`, muted `#8b93a7`.
-- Accent: **emerald `#10b981`** (primary actions, active nav, focus rings). Secondary warm amber `#f59e0b` used sparingly (highlights, interview status). Status colors from section 5 everywhere a status appears (badge bg = color at 15% opacity, text = color).
-- Fonts (self-hosted @fontsource, imported in main.tsx): **Manrope Variable** for UI, **IBM Plex Mono** for data bits (dates, counts, invite codes, statuses in tables).
-- Tailwind config maps these as tokens (`bg`, `surface`, `border`, `accent`, plus `status.saved` ... `status.ghosted`). Rounded-xl cards, 1px borders, soft shadow, generous spacing. Buttons: solid accent primary, ghost secondary. Focus-visible rings everywhere. `prefers-reduced-motion` respected.
-- Member avatars: initials in a circle, hue derived deterministically from username hash (`hsl(hash % 360, 55%, 45%)`), white initials.
+### Design system ("Worklight", light, professional, usability-first)
+
+Philosophy: JobSquad is a daily-use working tool, so it must read like a serious product (Stripe-dashboard / Linear-light restraint), not a themed landing page. The interface is monochrome ink on paper; color appears ONLY where it carries meaning: application/portal status, destructive actions, focus states. No gradients, no glow, no decorative color, no dark theme in v1.
+
+- Palette (named tokens in tailwind.config.js): `paper #FFFFFF` (surfaces/cards), `canvas #F7F7F5` (app background, slightly warm), `ink #1A1D21` (primary text + primary buttons), `muted #5C6470` (secondary text), `line #E4E4E1` (borders), `focus #2563EB` (links + focus rings only), `danger #DC2626`. Status colors from section 5.
+- Typography (self-hosted @fontsource, imported in main.tsx): **IBM Plex Sans** (400/500/600) for all UI, **IBM Plex Mono** for data (dates, counts, invite codes, status badge text). One family system, engineered feel. Headings are Plex Sans 600 with `-0.01em` tracking at restrained sizes (page title ~20px, section heading ~14px, body 14px, small 12.5px). Sentence case everywhere: headings, buttons, labels. No display font, no hero type, no uppercase-tracked eyebrows.
+- Components: primary button = ink bg, white text, rounded-md (6px), 34px height; secondary = paper bg + 1px line border + ink text; danger styling only on destructive confirms. Cards = paper, 1px line border, rounded-lg (10px), NO shadows (a single subtle shadow allowed on dialogs/popovers only). Tables: 12.5px medium muted sentence-case header row, 44px rows, hairline dividers, hover row `#FAFAF9`, dates/counts right-aligned in Plex Mono. Inputs: paper bg, line border, labels above, 2px focus ring in `focus` blue.
+- **Signature element** (the one place boldness is spent): the **Squad row**: overlapping 24px member avatars where each avatar wears a 2px ring in that member's status color for the company in question (dim gray ring outline = not applied), with tooltip "name: status". Used on company rows and the dashboard. Everything around it stays quiet.
+- Member avatars: initials in a circle, deterministic hue `hsl(hash(username) % 360, 45%, 42%)`, white initials.
+- Motion: 120-150ms ease-out on hover/focus/dialog transitions only. No entrance animations, no stagger reveals, no page transitions. `prefers-reduced-motion` respected.
+- Microcopy rules (usability-first): control labels state exactly what happens ("Add company", "Save application", never "Submit"); errors say what failed and how to recover, no apologies; empty states are invitations with the primary action inline ("No companies yet. Add the first one your squad should apply to."); vocabulary is consistent across screens (application, squad, portal, board).
 
 ### Routing and screens
 - `/auth`: split screen. Left: brand panel (logo wordmark "JobSquad", tagline "The multiplayer job hunt", 3 bullet value props). Right: login/register toggle form. On success store token, redirect to `/`.
@@ -273,7 +278,7 @@ CSV via Python `csv` module (proper quoting). Tags joined with `;`. These endpoi
 
 ## 10. Non-goals (v1)
 
-Email/password reset, avatar uploads, push/mobile notifications, roles beyond owner/member, group deletion or member removal, multi-language, light theme, SSR, offline. All fine later; nothing in v1 blocks them.
+Email/password reset, avatar uploads, push/mobile notifications, roles beyond owner/member, group deletion or member removal, multi-language, dark theme, SSR, offline. All fine later; nothing in v1 blocks them.
 
 ## 11. Decisions log
 
@@ -282,3 +287,4 @@ Email/password reset, avatar uploads, push/mobile notifications, roles beyond ow
 - **Single-port serving** (API + built SPA) keeps LAN sharing and deployment one-process simple; Vite dev mode stays available for development.
 - **Open registration** is acceptable for a private/LAN deployment; DEPLOY.md tells internet deployers to treat the URL as semi-private (and hardening like invite-only registration is a listed future).
 - Ports 8100/3100 chosen to avoid colliding with the user's other project (8000/3000).
+- **Design pivot (2026-07-29, user request):** the original dark "NightShift" theme was replaced by the light "Worklight" system above, following the Anthropic frontend-design skill: dark-bg-plus-single-bright-accent is a generic AI default; a professional daily-use tool wants a monochrome ink interface where color only encodes status meaning, usability-first microcopy, and minimal motion.

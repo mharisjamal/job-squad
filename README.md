@@ -1,95 +1,137 @@
-# JobSquad
+<p align="center">
+  <img src="docs/banner.svg" alt="JobSquad - the multiplayer job hunt" width="100%">
+</p>
 
-**The multiplayer job hunt.**
+<p align="center">
+  <b>Job hunting is lonely and badly tracked. It should not be either.</b><br>
+  A self-hosted tracker where a group of friends hunts together: shared companies, private-to-you-but-visible-to-them progress.
+</p>
 
-JobSquad is a small self-hosted web app for a group of friends who are job hunting at the same time. You share one pool of companies and job portals: when anyone finds an interesting company, they post it once and the whole squad sees it. Each member then tracks their own application against it - status (saved, applied, assessment, interview, offer, rejected, ghosted), dates, links, and notes - and everyone can see each other's progress. Drag your applications across a kanban board, watch the group's moves in a live activity feed, and export everything to CSV whenever you want your data elsewhere.
+---
 
-It runs as one process on one port from one command, stores everything in a single SQLite file, and is instantly shareable over your Wi-Fi.
+## The problem
 
-## Features
+Everyone job hunting with friends does the same two things, and both leak.
 
-- **Shared company pool**: anyone in the group posts a company (website, careers page, location, tags, shared notes); everyone sees it.
-- **Shared job portals**: a common list of job boards. Each member tracks their own relationship with a portal (signed up / active / abandoned), rates it 1-5, and adds notes.
-- **Your pipeline, visible to the squad**: each member keeps one application per company with status, applied date, the portal they applied through, the posting URL, and notes. Notes are visible to your group - that is the point.
-- **Seven statuses**: saved, applied, assessment, interview, offer, rejected, ghosted.
-- **Kanban board**: drag your application cards between status columns.
-- **Comments**: a discussion thread on every company.
-- **Dashboard**: your KPIs, squad comparison bars, portal effectiveness ("12 applications, 3 interviews, 1 offer via this portal"), companies you have not applied to yet, and upcoming follow-ups.
-- **Follow-up dates**: set one per application and see what is due in the next 7 days.
-- **Live activity feed**: "Ali moved TechCorp to Interview" shows up for everyone in real time (SSE), grouped by day.
-- **Invite codes**: create a group, share the 8-character code, friends join with it. You can be in several groups.
-- **CSV export**: applications (all members or just yours), companies, and portals.
-- **LAN sharing**: the launcher prints a network URL that friends on the same Wi-Fi can open.
+You share leads in WhatsApp, where a link scrolls out of reach in a day and nobody remembers who already applied. And you track your own applications in a spreadsheet you stop updating by week three, so you cannot answer "did I already apply here?" or "what happened with that one?".
+
+Meanwhile every job tracker on the market (Huntr, Teal, Simplify) is built for exactly one person. None of them know your friend exists.
+
+## The idea
+
+**Discovery is shared. Progress is personal.**
+
+Your squad keeps one common pool of companies and job portals. Anyone posts a company once and everyone sees it. But each member owns their own application on it: their status, their dates, their notes. Nobody overwrites anyone.
+
+<p align="center">
+  <img src="docs/concept.svg" alt="One shared pool of companies, with every member keeping their own status and notes on each one" width="100%">
+</p>
+
+That one structural choice is what makes the group worth having. When Ali gets rejected and writes "they want 3 years minimum, get a referral first", that note is waiting for you *before* you spend an evening on the application. When Sara gets an interview through a portal you gave up on, you can see it.
+
+## What it looks like
+
+Every company row shows your whole squad at a glance. Each avatar wears a ring in that person's status colour for that company, so one look tells you who has applied, who is interviewing, and who has not started.
+
+<p align="center">
+  <img src="docs/companies.svg" alt="Companies list with per-member status rings and an inline status control" width="100%">
+</p>
+
+Your own pipeline is a board. Drag a card and the status is saved for you alone.
+
+<p align="center">
+  <img src="docs/board.svg" alt="Kanban board with columns for each application status" width="100%">
+</p>
+
+## What you get
+
+**Track the hunt**
+- One application per person per company: status, applied date, follow-up date, the portal you went through, the job posting link, and your notes
+- Seven statuses that match reality, including **ghosted**, where most applications actually die
+- A board you drag cards across, and follow-up dates that surface what is due this week
+
+**Hunt as a group**
+- Shared company pool with website, careers page, location, tags, and facts the whole squad should know
+- Shared job portals, each with your own rating and notes, plus a running tally of which portals actually convert ("12 applications, 3 interviews, 1 offer via this one")
+- A comment thread on every company
+- A live activity feed: "Ali moved TechCorp to Interview" appears for everyone as it happens
+- A dashboard with your numbers, a squad comparison, and the list of companies your friends posted that you have not applied to yet
+
+**Own your data**
+- CSV export for applications, companies, and portals, any time
+- Everything lives in one database file you can copy
+- Self-hosted: no account with anyone, no data sold, no seat limits
 
 ## Quickstart
 
-Prerequisites:
+You need [Python 3.12+ with uv](https://astral.sh/uv) and [Node.js 18+](https://nodejs.org).
 
-- Python 3.12+ and [uv](https://astral.sh/uv)
-- Node.js 18+ (includes npm) from [nodejs.org](https://nodejs.org)
-
-Then:
-
-1. **Windows**: double-click `START.bat`. **macOS / Linux**: `python3 run.py`.
-2. The first run downloads dependencies and builds the app (a few minutes). Later starts are fast.
+1. **Windows**: double-click `START.bat`. **macOS or Linux**: `python3 run.py`
+2. First run installs dependencies and builds the app. Later starts are quick.
 3. Your browser opens at `http://localhost:8100`.
-4. The console also prints a **Network URL** (for example `http://192.168.1.23:8100`). Share it with friends on the same Wi-Fi. If Windows Firewall asks, allow access.
-5. Create an account, create a group, and share the **invite code**. Friends open the network URL, register, and join with the code.
+4. The console also prints a **Network URL** like `http://192.168.1.23:8100`. Friends on the same Wi-Fi open that. Allow the Windows Firewall prompt if it appears.
+5. Create your account, create a group, and share the 8-character **invite code**.
 
-## Dev mode
+That is the whole setup. No database to install, no services to configure.
 
-For hacking on the frontend with hot reload:
+## Signing in
 
-```
-set JOBSQUAD_DEV=1        (Windows)
-export JOBSQUAD_DEV=1     (macOS / Linux)
-python run.py
-```
+JobSquad adapts to where it runs:
 
-This skips the production build and starts the Vite dev server at `http://localhost:3100` (it proxies `/api` to the backend on 8100). Backend tests: `uv run pytest` inside `backend/`. Frontend checks: `npm run typecheck` inside `frontend/`.
+- **On your Wi-Fi**, signup is instant: display name, email, password.
+- **On the public internet**, turn on bot protection with config alone. Set a [Resend](https://resend.com) API key and signup requires a 6-digit code emailed to a real address. Add OAuth credentials and **Continue with Google / GitHub / LinkedIn** buttons appear automatically.
+
+You never pick a username. The server derives a handle; you choose a display name, or it comes from your provider along with your avatar.
+
+## Deploying it for real
+
+See **[DEPLOY.md](DEPLOY.md)**. The short version: the app is one process, so it deploys anywhere a container runs, and its data belongs in a hosted Postgres so a redeploy cannot wipe it.
 
 ## Configuration
 
-All optional, via environment variables:
+Everything is optional. Defaults are chosen so the app runs with zero configuration.
 
-| Var | Default | Meaning |
+| Variable | Default | What it does |
 |---|---|---|
-| `JOBSQUAD_PORT` | `8100` | API + app port |
-| `JOBSQUAD_DB_PATH` | `data/jobsquad.db` | SQLite file (dir auto-created) |
-| `JOBSQUAD_SECRET` | auto | JWT signing secret; if unset, 32 random bytes are generated and persisted to `data/.secret` so sessions survive restarts |
-| `JOBSQUAD_TOKEN_TTL_HOURS` | `168` | Session token lifetime (7 days) |
-| `JOBSQUAD_DEV` | unset | `1` = launcher runs the Vite dev server on 3100 instead of serving the build |
+| `JOBSQUAD_PORT` | `8100` | Port for the API and the app |
+| `JOBSQUAD_DB_PATH` | `data/jobsquad.db` | Database file |
+| `JOBSQUAD_SECRET` | auto | Session signing secret. Generated and saved to `data/.secret` if unset. Set it explicitly on a real server |
+| `JOBSQUAD_TOKEN_TTL_HOURS` | `168` | How long a login lasts (7 days) |
+| `JOBSQUAD_PUBLIC_URL` | `http://localhost:8100` | Public address, used to build OAuth redirect URLs |
+| `JOBSQUAD_DEV` | unset | `1` runs the Vite dev server on 3100 with hot reload |
+| `JOBSQUAD_RESEND_API_KEY` | unset | Resend key. **Setting this turns on email verification at signup** |
+| `JOBSQUAD_MAIL_FROM` | unset | Sender address, for example `JobSquad <noreply@yourdomain.com>` |
+| `JOBSQUAD_SMTP_HOST` and friends | unset | SMTP instead of Resend, if you prefer |
+| `JOBSQUAD_GOOGLE_CLIENT_ID` / `_SECRET` | unset | Enables Continue with Google |
+| `JOBSQUAD_GITHUB_CLIENT_ID` / `_SECRET` | unset | Enables Continue with GitHub |
+| `JOBSQUAD_LINKEDIN_CLIENT_ID` / `_SECRET` | unset | Enables Continue with LinkedIn |
 
-## Your data
+## How it is built
 
-Everything lives in one SQLite file: `data/jobsquad.db`. To back up, copy that file (see [DEPLOY.md](DEPLOY.md) for a safe hot-backup command). The auto-generated auth secret lives in `data/.secret`; keep it with the database if you move the app, or set `JOBSQUAD_SECRET` yourself.
-
-## Export
-
-Inside a group, the topbar **Export** menu downloads three CSVs: applications (all members, or just yours), companies, and portals.
-
-## Stack
-
-One process serves everything: FastAPI answers the JSON API under `/api/*` and serves the built React app on port 8100. SQLite (WAL mode) via async SQLAlchemy. Authentication is stdlib-only (PBKDF2 password hashing + HS256 JWT, no auth libraries). Realtime is server-sent events. Frontend: React 18, Vite, TypeScript (strict), Tailwind, TanStack Query, dnd-kit for the kanban drag.
+One process serves everything: FastAPI answers the JSON API under `/api/*` and serves the built React app on a single port. Authentication is stdlib-only, with PBKDF2 password hashing and hand-rolled HS256 tokens, so there is no auth library to keep patched. Realtime updates are server-sent events. The interface is dark by default with a light mode, built on one token system where colour is only ever used to carry meaning.
 
 ```
 JobSquad/
   START.bat     Windows double-click launcher
-  run.py        cross-platform launcher: installs, builds, runs, opens the app
-  backend/      FastAPI app: the API + serves the built frontend
-  frontend/     React SPA (Vite)
-  data/         created at first run: jobsquad.db + .secret
-  DEPLOY.md     LAN sharing and free 24/7 hosting options
+  run.py        installs, builds, runs, and opens the app
+  backend/      FastAPI: the API, auth, and the built frontend
+  frontend/     React 18 + Vite + TypeScript + Tailwind
+  docs/         README artwork
+  data/         created on first run: the database and auth secret
 ```
 
-## Putting it on the internet
-
-See [DEPLOY.md](DEPLOY.md): LAN-only (the default), a free 24/7 VM on Oracle Cloud, a Cloudflare Tunnel from an always-on home PC, and why free-tier PaaS disks will eat your SQLite data.
+Backend tests: `uv run pytest` in `backend/`. Frontend checks: `npm run typecheck` in `frontend/`.
 
 ## Security, honestly
 
-Accounts are simple username + password, built for a private deployment among friends. **Anyone who can reach the URL can register and create groups**, so treat the URL as semi-private: keep it on your LAN, or put it behind a tunnel/VPN, and set `JOBSQUAD_SECRET` explicitly on a real server. Passwords are hashed (PBKDF2, 250,000 iterations) and group data is only visible to group members.
+Group data is only ever visible to that group's members, and a request for another group's data returns a plain "not found" rather than confirming it exists. Passwords are hashed with PBKDF2 at 250,000 iterations. Login attempts are rate limited. CSV exports neutralise spreadsheet formula injection. Session tokens returned from social sign-in travel in the URL fragment, so they never reach a server log.
 
-## Later ideas
+The honest caveat: with no email or OAuth configured, anyone who can reach the URL can register. That is fine on your Wi-Fi and wrong on the open internet, which is why verification exists and why turning it on is a single environment variable.
 
-Deliberately not in v1: password reset, email or push notifications, invite-only registration, removing members or deleting groups, avatar uploads, a dark theme, and a Postgres option (the SQL is kept portable, so that stays a config swap away).
+## Roadmap
+
+Not built yet, on purpose: password reset, push and email notifications, removing members or deleting groups, avatar uploads, and multiple squads sharing a company pool.
+
+## License
+
+See [LICENSE](LICENSE).

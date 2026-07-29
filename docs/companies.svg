@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" width="1200" height="470" role="img" aria-label="Companies list showing every squad member's status at a glance">
+  <rect width="1200" height="470" fill="#0F1216"/>
+
+  <!-- sidebar -->
+  <rect x="0" y="0" width="196" height="470" fill="#0F1216"/>
+  <rect x="196" y="0" width="1" height="470" fill="#262C34"/>
+  <text x="28" y="42" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#E7EAEE">JobSquad</text>
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13.5" fill="#98A2B0">
+    <text x="28" y="96">Dashboard</text>
+    <rect x="16" y="112" width="164" height="32" rx="8" fill="#1B2028"/>
+    <text x="28" y="134" fill="#E7EAEE">Companies</text>
+    <text x="28" y="172">Board</text>
+    <text x="28" y="208">Portals</text>
+    <text x="28" y="244">Activity</text>
+  </g>
+
+  <!-- header -->
+  <text x="232" y="52" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="600" fill="#E7EAEE">Companies</text>
+  <text x="232" y="74" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13.5" fill="#98A2B0">The squad's shared pool. Anyone can add one.</text>
+  <rect x="1012" y="34" width="152" height="34" rx="7" fill="#E7EAEE"/>
+  <text x="1088" y="56" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13.5" font-weight="600" fill="#0F1216" text-anchor="middle">+  Add company</text>
+
+  <!-- filter row -->
+  <rect x="232" y="94" width="330" height="34" rx="7" fill="#171B21" stroke="#262C34"/>
+  <text x="250" y="116" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13" fill="#98A2B0">Search by name or location</text>
+  <rect x="576" y="94" width="220" height="34" rx="7" fill="#171B21" stroke="#262C34"/>
+  <text x="594" y="116" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13" fill="#E7EAEE">Not applied by me</text>
+
+  <!-- table head -->
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="12.5" fill="#98A2B0">
+    <text x="248" y="166">Company</text>
+    <text x="612" y="166">Squad</text>
+    <text x="860" y="166">My status</text>
+    <text x="1148" y="166" text-anchor="end">Updated</text>
+  </g>
+  <rect x="232" y="178" width="932" height="1" fill="#262C34"/>
+
+  <!-- row 1 -->
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif">
+    <text x="248" y="212" font-size="14.5" font-weight="600" fill="#E7EAEE">TechCorp</text>
+    <text x="248" y="231" font-size="12.5" fill="#98A2B0">Remote</text>
+    <g>
+      <circle cx="624" cy="216" r="14" fill="#3F6FA8"/><circle cx="624" cy="216" r="16" fill="none" stroke="#D9903C" stroke-width="2"/>
+      <text x="624" y="221" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">HA</text>
+      <circle cx="652" cy="216" r="14" fill="#2E8C6A"/><circle cx="652" cy="216" r="16" fill="none" stroke="#E06C6C" stroke-width="2"/>
+      <text x="652" y="221" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">AL</text>
+      <circle cx="680" cy="216" r="14" fill="#2A2F38"/><circle cx="680" cy="216" r="16" fill="none" stroke="#333A44" stroke-width="2"/>
+      <text x="680" y="221" font-size="10" font-weight="600" fill="#98A2B0" text-anchor="middle">SA</text>
+    </g>
+    <rect x="860" y="203" width="96" height="26" rx="13" fill="#2A2015"/>
+    <circle cx="876" cy="216" r="4" fill="#D9903C"/>
+    <text x="887" y="221" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#E5A55A">Interview</text>
+    <text x="1148" y="221" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">2h ago</text>
+  </g>
+  <rect x="232" y="252" width="932" height="1" fill="#262C34"/>
+
+  <!-- row 2 -->
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif">
+    <text x="248" y="286" font-size="14.5" font-weight="600" fill="#E7EAEE">Nimbus Labs</text>
+    <text x="248" y="305" font-size="12.5" fill="#98A2B0">Berlin</text>
+    <g>
+      <circle cx="624" cy="290" r="14" fill="#3F6FA8"/><circle cx="624" cy="290" r="16" fill="none" stroke="#5B8DEF" stroke-width="2"/>
+      <text x="624" y="295" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">HA</text>
+      <circle cx="652" cy="290" r="14" fill="#2E8C6A"/><circle cx="652" cy="290" r="16" fill="none" stroke="#3FA875" stroke-width="2"/>
+      <text x="652" y="295" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">AL</text>
+      <circle cx="680" cy="290" r="14" fill="#8A5BA8"/><circle cx="680" cy="290" r="16" fill="none" stroke="#9B7BE8" stroke-width="2"/>
+      <text x="680" y="295" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">SA</text>
+    </g>
+    <rect x="860" y="277" width="88" height="26" rx="13" fill="#131C2B"/>
+    <circle cx="876" cy="290" r="4" fill="#5B8DEF"/>
+    <text x="887" y="295" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#7FAAF8">Applied</text>
+    <text x="1148" y="295" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">1d ago</text>
+  </g>
+  <rect x="232" y="326" width="932" height="1" fill="#262C34"/>
+
+  <!-- row 3 (not applied by me) -->
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif">
+    <text x="248" y="360" font-size="14.5" font-weight="600" fill="#E7EAEE">Vector Pay</text>
+    <text x="248" y="379" font-size="12.5" fill="#98A2B0">Karachi</text>
+    <g>
+      <circle cx="624" cy="364" r="14" fill="#2A2F38"/><circle cx="624" cy="364" r="16" fill="none" stroke="#333A44" stroke-width="2"/>
+      <text x="624" y="369" font-size="10" font-weight="600" fill="#98A2B0" text-anchor="middle">HA</text>
+      <circle cx="652" cy="364" r="14" fill="#2E8C6A"/><circle cx="652" cy="364" r="16" fill="none" stroke="#D9903C" stroke-width="2"/>
+      <text x="652" y="369" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">AL</text>
+      <circle cx="680" cy="364" r="14" fill="#8A5BA8"/><circle cx="680" cy="364" r="16" fill="none" stroke="#5B8DEF" stroke-width="2"/>
+      <text x="680" y="369" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">SA</text>
+    </g>
+    <rect x="860" y="351" width="128" height="26" rx="7" fill="#171B21" stroke="#333A44"/>
+    <text x="876" y="369" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="12.5" fill="#98A2B0">Set status...</text>
+    <text x="1148" y="369" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">3d ago</text>
+  </g>
+
+  <text x="232" y="428" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="12.5" fill="#98A2B0">Each avatar wears a ring in that person's status colour. A grey ring means they have not applied yet.</text>
+</svg>

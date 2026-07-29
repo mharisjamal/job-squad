@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" width="1200" height="480" role="img" aria-label="The board: drag an application between status columns">
+  <rect width="1200" height="480" fill="#0F1216"/>
+
+  <!-- topbar -->
+  <rect x="0" y="0" width="1200" height="56" fill="#171B21"/>
+  <rect x="0" y="56" width="1200" height="1" fill="#262C34"/>
+  <text x="32" y="35" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="16" font-weight="600" fill="#E7EAEE">Job Hunt 2026</text>
+  <rect x="150" y="18" width="104" height="24" rx="6" fill="#1E232A" stroke="#262C34"/>
+  <text x="163" y="34" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0">QRG74R87</text>
+
+  <text x="32" y="96" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="20" font-weight="600" fill="#E7EAEE">Board</text>
+  <text x="32" y="118" font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif" font-size="13.5" fill="#98A2B0">Your applications only. Drag a card to change its status.</text>
+
+  <g font-family="IBM Plex Sans, Segoe UI, Roboto, sans-serif">
+    <!-- column: Saved -->
+    <rect x="32" y="140" width="212" height="300" rx="10" fill="#0F1216" stroke="#262C34"/>
+    <circle cx="52" cy="166" r="5" fill="#8A94A3"/>
+    <text x="66" y="171" font-size="14" font-weight="600" fill="#E7EAEE">Saved</text>
+    <text x="222" y="171" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">1</text>
+    <rect x="46" y="186" width="184" height="62" rx="8" fill="#171B21" stroke="#262C34"/>
+    <text x="62" y="210" font-size="14" font-weight="600" fill="#E7EAEE">Vector Pay</text>
+    <text x="62" y="230" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="11.5" fill="#98A2B0">posted by Sara</text>
+
+    <!-- column: Applied -->
+    <rect x="256" y="140" width="212" height="300" rx="10" fill="#0F1216" stroke="#262C34"/>
+    <circle cx="276" cy="166" r="5" fill="#5B8DEF"/>
+    <text x="290" y="171" font-size="14" font-weight="600" fill="#E7EAEE">Applied</text>
+    <text x="446" y="171" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">2</text>
+    <rect x="270" y="186" width="184" height="72" rx="8" fill="#171B21" stroke="#262C34"/>
+    <text x="286" y="210" font-size="14" font-weight="600" fill="#E7EAEE">Nimbus Labs</text>
+    <text x="286" y="230" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="11.5" fill="#98A2B0">Jul 26 · LinkedIn</text>
+    <rect x="270" y="266" width="184" height="62" rx="8" fill="#171B21" stroke="#262C34"/>
+    <text x="286" y="290" font-size="14" font-weight="600" fill="#E7EAEE">Orbit Systems</text>
+    <text x="286" y="310" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="11.5" fill="#98A2B0">Jul 28 · Wellfound</text>
+
+    <!-- column: Assessment -->
+    <rect x="480" y="140" width="212" height="300" rx="10" fill="#0F1216" stroke="#262C34"/>
+    <circle cx="500" cy="166" r="5" fill="#9B7BE8"/>
+    <text x="514" y="171" font-size="14" font-weight="600" fill="#E7EAEE">Assessment</text>
+    <text x="670" y="171" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">0</text>
+    <rect x="494" y="186" width="184" height="58" rx="8" fill="none" stroke="#262C34" stroke-dasharray="4 4"/>
+    <text x="586" y="220" font-size="12.5" fill="#98A2B0" text-anchor="middle">Drop here</text>
+
+    <!-- column: Interview (card mid-drag) -->
+    <rect x="704" y="140" width="212" height="300" rx="10" fill="#0F1216" stroke="#6AA1FF" stroke-width="2" stroke-dasharray="5 4"/>
+    <circle cx="724" cy="166" r="5" fill="#D9903C"/>
+    <text x="738" y="171" font-size="14" font-weight="600" fill="#E7EAEE">Interview</text>
+    <text x="894" y="171" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">1</text>
+    <g transform="rotate(-2 810 230)">
+      <rect x="716" y="190" width="188" height="78" rx="8" fill="#1E232A" stroke="#333A44"/>
+      <text x="734" y="214" font-size="14" font-weight="600" fill="#E7EAEE">TechCorp</text>
+      <text x="734" y="234" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="11.5" fill="#98A2B0">Jul 29 · LinkedIn</text>
+      <rect x="734" y="243" width="112" height="18" rx="9" fill="#2A2015"/>
+      <text x="744" y="256" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="10.5" fill="#E5A55A">follow up in 2d</text>
+    </g>
+
+    <!-- column: Offer -->
+    <rect x="928" y="140" width="212" height="300" rx="10" fill="#0F1216" stroke="#262C34"/>
+    <circle cx="948" cy="166" r="5" fill="#3FA875"/>
+    <text x="962" y="171" font-size="14" font-weight="600" fill="#E7EAEE">Offer</text>
+    <text x="1118" y="171" font-family="IBM Plex Mono, ui-monospace, Consolas, monospace" font-size="12" fill="#98A2B0" text-anchor="end">0</text>
+    <rect x="942" y="186" width="184" height="58" rx="8" fill="none" stroke="#262C34" stroke-dasharray="4 4"/>
+    <text x="1034" y="220" font-size="12.5" fill="#98A2B0" text-anchor="middle">Drop here</text>
+  </g>
+</svg>

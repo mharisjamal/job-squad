@@ -11,7 +11,8 @@ async def test_register_then_me(client, register):
     assert body["id"] == account["user"]["id"]
 
 
-async def test_register_normalizes_username_and_login_works(client, register):
+async def test_login_by_username_legacy_body(client, register):
+    """The legacy {username, password} body keeps working."""
     await register(username="haris")
     resp = await client.post(
         "/api/auth/login", json={"username": "HARIS", "password": "password123"}
@@ -20,11 +21,30 @@ async def test_register_normalizes_username_and_login_works(client, register):
     assert resp.json()["user"]["username"] == "haris"
 
 
-async def test_duplicate_username_409(client, register):
+async def test_login_by_identifier_email_or_username(client, register):
+    await register(username="haris")
+    for identifier in ("haris@example.com", "HARIS@example.com", "haris"):
+        resp = await client.post(
+            "/api/auth/login", json={"identifier": identifier, "password": "password123"}
+        )
+        assert resp.status_code == 200, identifier
+        assert resp.json()["user"]["username"] == "haris"
+
+
+async def test_login_without_identifier_422(client):
+    resp = await client.post("/api/auth/login", json={"password": "password123"})
+    assert resp.status_code == 422
+
+
+async def test_duplicate_email_409(client, register):
     await register(username="haris")
     resp = await client.post(
         "/api/auth/register",
-        json={"username": "Haris", "display_name": "Other", "password": "password123"},
+        json={
+            "display_name": "Other",
+            "email": "HARIS@example.com",
+            "password": "password123",
+        },
     )
     assert resp.status_code == 409
 
@@ -32,14 +52,14 @@ async def test_duplicate_username_409(client, register):
 async def test_bad_password_login_401(client, register):
     await register(username="haris")
     resp = await client.post(
-        "/api/auth/login", json={"username": "haris", "password": "wrong-password"}
+        "/api/auth/login", json={"identifier": "haris", "password": "wrong-password"}
     )
     assert resp.status_code == 401
 
 
 async def test_unknown_user_login_401(client):
     resp = await client.post(
-        "/api/auth/login", json={"username": "ghost", "password": "password123"}
+        "/api/auth/login", json={"identifier": "ghost", "password": "password123"}
     )
     assert resp.status_code == 401
 
@@ -47,15 +67,19 @@ async def test_unknown_user_login_401(client):
 async def test_short_password_422(client):
     resp = await client.post(
         "/api/auth/register",
-        json={"username": "haris", "display_name": "Haris", "password": "short"},
+        json={
+            "display_name": "Haris",
+            "email": "haris@example.com",
+            "password": "short",
+        },
     )
     assert resp.status_code == 422
 
 
-async def test_invalid_username_422(client):
+async def test_invalid_email_422(client):
     resp = await client.post(
         "/api/auth/register",
-        json={"username": "no spaces!", "display_name": "X", "password": "password123"},
+        json={"display_name": "X", "email": "not-an-email", "password": "password123"},
     )
     assert resp.status_code == 422
 

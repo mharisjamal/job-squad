@@ -96,12 +96,26 @@ JobSquad/
 | `JOBSQUAD_SECRET` | auto | JWT signing secret; if unset, generate 32 random bytes and persist to `data/.secret` so tokens survive restarts |
 | `JOBSQUAD_TOKEN_TTL_HOURS` | `168` | Session token lifetime (7 days) |
 | `JOBSQUAD_DEV` | unset | `1` = launcher runs Vite dev server on 3100 instead of serving the build |
+| `JOBSQUAD_RESEND_API_KEY` | unset | **Resend API key (preferred mail transport).** Setting this (or SMTP) turns on email-OTP registration (`otp_required`) |
+| `JOBSQUAD_MAIL_FROM` | unset | From address for verification mail, e.g. `JobSquad <noreply@yourdomain.com>`. Required with Resend |
+| `JOBSQUAD_SMTP_HOST` | unset | SMTP server (fallback transport when no Resend key) |
+| `JOBSQUAD_SMTP_PORT` | `587` | SMTP port |
+| `JOBSQUAD_SMTP_USER` / `JOBSQUAD_SMTP_PASSWORD` | unset | SMTP credentials (optional for unauthenticated relays) |
+| `JOBSQUAD_SMTP_STARTTLS` | `true` | Use STARTTLS |
+| `JOBSQUAD_PUBLIC_URL` | `http://localhost:8100` | Public base URL of this deployment; used to build OAuth redirect URIs |
+| `JOBSQUAD_GOOGLE_CLIENT_ID` / `_SECRET` | unset | Enables "Continue with Google" |
+| `JOBSQUAD_GITHUB_CLIENT_ID` / `_SECRET` | unset | Enables "Continue with GitHub" |
+| `JOBSQUAD_LINKEDIN_CLIENT_ID` / `_SECRET` | unset | Enables "Continue with LinkedIn" |
 
 CORS: allow all origins, `allow_credentials=False` (auth is via Bearer header, not cookies).
 
 ## 4. Data model (SQLAlchemy, table names exact)
 
-- **users**: id PK, username TEXT UNIQUE NOT NULL (stored lowercase, 3-30 chars `[a-z0-9_]`), display_name TEXT NOT NULL, password_hash TEXT NOT NULL, created_at DateTime
+- **users**: id PK, username TEXT UNIQUE NOT NULL (**auto-generated, never chosen by the user**; internal handle), display_name TEXT NOT NULL, password_hash TEXT **NULLABLE** (null for social-only accounts), email TEXT UNIQUE NULLABLE (present for every account created after this change), avatar_url TEXT NULLABLE (from the provider), created_at DateTime
+- **pending_registrations**: id PK, email TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, password_hash TEXT NOT NULL, otp_hash TEXT NOT NULL, attempts INT default 0, expires_at DateTime, last_sent_at DateTime, created_at DateTime
+- **user_identities**: id PK, user_id FK users (CASCADE), provider TEXT NOT NULL (`google`|`github`|`linkedin`), provider_user_id TEXT NOT NULL, email TEXT NULLABLE, created_at; UNIQUE(provider, provider_user_id), index(user_id)
+
+(Schema changes on an existing DB are applied by a lightweight idempotent migration in `db.py` - `create_all` plus explicit `PRAGMA table_info` checks + `ALTER TABLE ... ADD COLUMN` / `CREATE UNIQUE INDEX IF NOT EXISTS` - since this project deliberately has no Alembic. SQLite cannot drop a NOT NULL constraint in place, so making `password_hash` nullable on an existing DB uses the standard 12-step table rebuild: create the new table, copy rows, drop, rename, inside one transaction.)
 - **groups**: id PK, name TEXT NOT NULL, invite_code TEXT UNIQUE NOT NULL (8 chars from `A-Z0-9`, unambiguous set, generated server-side), owner_id FK users, created_at
 - **group_members**: id PK, group_id FK, user_id FK, role TEXT ('owner'|'member'), joined_at; UNIQUE(group_id, user_id)
 - **companies**: id PK, group_id FK, name TEXT NOT NULL, website TEXT, careers_url TEXT, location TEXT, tags JSON (list of strings, default []), notes TEXT (shared facts), archived BOOL default false, created_by FK users, created_at, updated_at
@@ -117,9 +131,23 @@ Deletes: deleting a company cascades its applications + comments. Deleting a por
 
 ## 5. Enums and status colors (frozen)
 
-Application status (order matters, kanban column order). Status color is the ONLY vivid color in the UI; each status has a text color and a tint background (badge = tint bg + text color + leading dot, AA contrast):
+Application status (order matters, kanban column order). Status color is the ONLY vivid color in the UI; each status has a text color and a tint background (badge = tint bg + text color + leading dot, AA contrast). **Per-mode values, exposed as CSS variables (`--status-applied-text` etc.) so components never hardcode a hex:**
 
-| value | label | text color | tint bg | dot |
+Dark (default):
+
+| value | label | text | tint bg | dot |
+|---|---|---|---|---|
+| `saved` | Saved | `#A8B3C2` | `#1A1F26` | `#8A94A3` |
+| `applied` | Applied | `#7FAAF8` | `#131C2B` | `#5B8DEF` |
+| `assessment` | Assessment | `#B69CF5` | `#1E1A2E` | `#9B7BE8` |
+| `interview` | Interview | `#E5A55A` | `#2A2015` | `#D9903C` |
+| `offer` | Offer | `#57C08A` | `#12241C` | `#3FA875` |
+| `rejected` | Rejected | `#F08585` | `#2A1719` | `#E06C6C` |
+| `ghosted` | Ghosted | `#9AA0A8` | `#1C1E22` | `#7C838C` |
+
+Light:
+
+| value | label | text | tint bg | dot |
 |---|---|---|---|---|
 | `saved` | Saved | `#475569` | `#F1F5F9` | `#64748B` |
 | `applied` | Applied | `#1D4ED8` | `#EFF6FF` | `#2563EB` |
@@ -162,8 +190,20 @@ GroupDetail     Group + {members: [{user_id, username, display_name, role, joine
 ```
 
 ### Auth (`routers/auth.py`)
-- `POST /api/auth/register` `{username, display_name, password}` -> `{token, user: User}`. Open registration. Password min 8 chars. Username normalized lowercase; 409 if taken.
-- `POST /api/auth/login` `{username, password}` -> `{token, user: User}`. 401 on bad creds.
+
+**Identity model:** email is the login identifier; **usernames are never chosen by a user**. On account creation the server derives a handle from the email local part (or display name), slugified to `[a-z0-9_]`, 3-30 chars, uniquified with a numeric suffix on collision. Social accounts have `password_hash = NULL` and cannot use password login. `User` wire shape gains `avatar_url` (nullable) and `email` (nullable); `username` stays for display fallbacks.
+
+- `GET /api/auth/config` (public) -> `{otp_required: bool, providers: ["google","github","linkedin"]}` - `providers` lists only those with credentials configured; the frontend renders exactly those buttons. `otp_required` is true when a mail transport (Resend key or SMTP host) is configured.
+- `POST /api/auth/login` `{identifier, password}` -> `{token, user}`. `identifier` matches email OR username (back-compat for pre-existing accounts). 401 on bad creds or on an account with no password (message: "That account signs in with Google, GitHub, or LinkedIn."). Throttled (10 failures / 5 min per identifier+IP -> 429). The legacy `{username, password}` body still works.
+- `POST /api/auth/register` `{display_name, email, password}` -> `{token, user}`. **Only when `otp_required` is false** (403 otherwise). No username field. Username auto-derived.
+- **Email-OTP signup (active when a mail transport is configured):**
+  - `POST /api/auth/register/start` (public) `{display_name, email, password}` -> `{ok: true, resend_after_seconds: 60}`. 409 if the email already has an account. Upserts a `pending_registrations` row keyed by email with a 6-digit code (crypto-random; stored as HMAC-SHA256 keyed by the app secret and bound to the email; never plaintext, never logged), TTL 10 minutes. Throttles: 60s resend cooldown per email (429), 10 starts per IP per hour (429). Mail failure -> 502, real error logged server-side.
+  - `POST /api/auth/register/verify` (public) `{email, code}` -> `{token, user}` (auto-login). Constant-time compare; 5 wrong attempts deletes the pending row (429, start again); expired -> 410. Race-safe user creation.
+- **Social sign-in (OAuth 2.0 authorization code + PKCE where supported; secrets stay server-side):**
+  - `GET /api/auth/oauth/{provider}/start` (public) -> **302** to the provider's consent screen. Server generates `state` (signed, 10-minute TTL, HttpOnly-free: carried in a short-lived signed token, verified on callback) and a PKCE `code_verifier`; 404 when the provider is not configured.
+  - `GET /api/auth/oauth/{provider}/callback?code=&state=` (public) -> **302 to the SPA** at `{public_url}/auth/callback#token=<jwt>` on success, or `#error=<code>` on failure. **The session token travels in the URL fragment, never the query string**, so it is not sent to servers, not written to access logs, and not leaked via Referer; the SPA reads it, stores it, and immediately `history.replaceState`s it out of the address bar.
+  - Provider endpoints/scopes: **Google** OIDC (`openid email profile`), **GitHub** (`read:user user:email`; primary verified address fetched from `/user/emails` because the public profile email is often null), **LinkedIn** OIDC (`openid profile email`, userinfo endpoint).
+  - **Account linking rule (takeover-safe):** find identity by `(provider, provider_user_id)` -> log in. Else, if the provider asserts a **verified** email that matches an existing user, link a new `user_identities` row to that user. If the provider does not verify the email, do **not** auto-link: return `#error=email_unverified`. Otherwise create a new user (no password, avatar + display name from the provider, derived username).
 - `GET /api/auth/me` -> `User`.
 
 ### Groups (`routers/groups.py`)
@@ -224,11 +264,26 @@ CSV via Python `csv` module (proper quoting). Tags joined with `;`. These endpoi
 
 ## 7. Frontend spec
 
-### Design system ("Worklight", light, professional, usability-first)
+### Design system ("Worklight", professional, usability-first, **dark by default**)
 
-Philosophy: JobSquad is a daily-use working tool, so it must read like a serious product (Stripe-dashboard / Linear-light restraint), not a themed landing page. The interface is monochrome ink on paper; color appears ONLY where it carries meaning: application/portal status, destructive actions, focus states. No gradients, no glow, no decorative color, no dark theme in v1.
+Philosophy: JobSquad is a daily-use working tool, so it must read like a serious product (Linear / Stripe-dashboard restraint), not a themed landing page. The interface is monochrome; color appears ONLY where it carries meaning: application/portal status, destructive actions, focus states. No gradients, no glow, no decorative color.
 
-- Palette (named tokens in tailwind.config.js): `paper #FFFFFF` (surfaces/cards), `canvas #F7F7F5` (app background, slightly warm), `ink #1A1D21` (primary text + primary buttons), `muted #5C6470` (secondary text), `line #E4E4E1` (borders), `focus #2563EB` (links + focus rings only), `danger #DC2626`. Status colors from section 5.
+**Two modes, dark is the default.** Both are first-class and share one token contract; every token is a CSS variable on `:root` (dark) and `:root[data-theme="light"]`, and Tailwind tokens reference `var(...)` so no component hardcodes a hex. An inline script in `index.html` sets `data-theme` from `localStorage` before first paint (no theme flash). Toggle lives in the sidebar user menu ("Switch to light mode" / "Switch to dark mode"), persisted as `jobsquad_theme`; default when unset is dark.
+
+**Dark-mode craft rules (these are what separate a professional dark UI from the generic "AI" one):**
+1. **No pure black and no neon accent.** The canvas is a blue-tinted charcoal, not `#000`; there is no acid-green/violet/cyan brand glow anywhere.
+2. **Elevation is expressed by surface lightness, not shadows** (shadows barely read on dark). Canvas -> card -> dialog each step lighter.
+3. **Borders are lighter than their surface** (never darker), 1px, low contrast.
+4. **Text is off-white, never `#FFFFFF`** (pure white on near-black causes halation and eye strain over a long session).
+5. **Status colors are re-derived per mode, not reused.** Saturated light-mode colors vibrate on dark, so dark uses lighter, lower-chroma text colors on very dark tinted backgrounds.
+6. **The primary button inverts** (light surface, dark text) instead of introducing a saturated brand fill: the interface stays monochrome and the action still reads as primary.
+
+Palette (dark, default):
+`canvas #0F1216` (app bg) - `paper #171B21` (cards) - `raised #1E232A` (dialogs, popovers, menus) - `line #262C34` (borders) - `line-strong #333A44` (structural dividers) - `ink #E7EAEE` (primary text) - `muted #98A2B0` (secondary text, AA on canvas) - `focus #6AA1FF` (links + focus rings only) - `danger #F87171`. Primary button: `ink` background with `canvas` text; secondary: `paper` background, `line` border, `ink` text; hover on rows/ghost controls: `#1B2028`.
+
+Palette (light): `paper #FFFFFF` - `canvas #F7F7F5` - `raised #FFFFFF` - `line #E4E4E1` - `line-strong #D6D6D2` - `ink #1A1D21` - `muted #5C6470` - `focus #2563EB` - `danger #DC2626`. Primary button: `ink` bg, white text; row hover `#FAFAF9`.
+
+Member avatars: `hsl(hash(username) % 360, 40%, 52%)` in dark and `hsl(..., 45%, 42%)` in light, white initials in both.
 - Typography (self-hosted @fontsource, imported in main.tsx): **IBM Plex Sans** (400/500/600) for all UI, **IBM Plex Mono** for data (dates, counts, invite codes, status badge text). One family system, engineered feel. Headings are Plex Sans 600 with `-0.01em` tracking at restrained sizes (page title ~20px, section heading ~14px, body 14px, small 12.5px). Sentence case everywhere: headings, buttons, labels. No display font, no hero type, no uppercase-tracked eyebrows.
 - Components: primary button = ink bg, white text, rounded-md (6px), 34px height; secondary = paper bg + 1px line border + ink text; danger styling only on destructive confirms. Cards = paper, 1px line border, rounded-lg (10px), NO shadows (a single subtle shadow allowed on dialogs/popovers only). Tables: 12.5px medium muted sentence-case header row, 44px rows, hairline dividers, hover row `#FAFAF9`, dates/counts right-aligned in Plex Mono. Inputs: paper bg, line border, labels above, 2px focus ring in `focus` blue.
 - **Signature element** (the one place boldness is spent): the **Squad row**: overlapping 24px member avatars where each avatar wears a 2px ring in that member's status color for the company in question (dim gray ring outline = not applied), with tooltip "name: status". Used on company rows and the dashboard. Everything around it stays quiet.
@@ -237,7 +292,8 @@ Philosophy: JobSquad is a daily-use working tool, so it must read like a serious
 - Microcopy rules (usability-first): control labels state exactly what happens ("Add company", "Save application", never "Submit"); errors say what failed and how to recover, no apologies; empty states are invitations with the primary action inline ("No companies yet. Add the first one your squad should apply to."); vocabulary is consistent across screens (application, squad, portal, board).
 
 ### Routing and screens
-- `/auth`: split screen. Left: brand panel (logo wordmark "JobSquad", tagline "The multiplayer job hunt", 3 bullet value props). Right: login/register toggle form. On success store token, redirect to `/`.
+- `/auth`: split screen. Left: brand panel (wordmark "JobSquad", tagline "The multiplayer job hunt", 3 value props). Right: sign-in / create-account toggle. **Social buttons first** ("Continue with Google / GitHub / LinkedIn", rendered only for providers in `/api/auth/config`, each with its brand mark, neutral Worklight styling: paper bg, 1px line border, ink text, brand logo as the only color), then a "or" hairline divider, then the email form. **No username field anywhere.** Create account collects display name, email, password; when `otp_required` it becomes a 2-step flow (send code -> 6-digit code entry with resend countdown). On success store token, redirect to `/`.
+- `/auth/callback`: handles the OAuth return. Reads `#token=` from the fragment, stores it, `history.replaceState`s the fragment away, resolves the session, redirects to `/` (or the saved deep link). On `#error=` shows the matching message on the auth screen (e.g. `email_unverified` -> "That account's email is not verified with the provider. Use email signup instead.").
 - `/` (Groups): my groups as cards (name, member_count, invite code with copy button) + "Create group" and "Join with code" dialogs. Clicking a group -> `/g/:gid`. localStorage `last_group` -> auto-redirect if it still exists (a "Switch group" item in the user menu returns here).
 - `/g/:gid` shell: left sidebar nav (Dashboard, Companies, Board, Portals, Activity), group name + switcher on top, user menu (display name, Sign out), invite-code chip with copy. Mobile: sidebar collapses to a drawer (hamburger).
   - **Dashboard** (`/g/:gid`): KPI row (my totals: Applied, In interviews, Offers, Response rate). "Squad comparison": horizontal stacked bars per member colored by status counts (pure CSS, no chart lib). "Waiting for you": up to 5 companies with `not_applied` by me + link to filtered Companies. "Upcoming follow-ups": my applications with follow_up_at within 7 days. "Portal effectiveness" mini-table from stats.per_portal. Recent activity (last 8).
@@ -285,7 +341,9 @@ Email/password reset, avatar uploads, push/mobile notifications, roles beyond ow
 - **Application notes are visible to the whole group.** That is the product's point (shared experience). The UI labels them "visible to your group".
 - **SQLite over Postgres/Supabase:** no accounts or services needed to run today; single-file backup; portable SQL keeps the Postgres door open.
 - **Single-port serving** (API + built SPA) keeps LAN sharing and deployment one-process simple; Vite dev mode stays available for development.
-- **Open registration** is acceptable for a private/LAN deployment; DEPLOY.md tells internet deployers to treat the URL as semi-private (and hardening like invite-only registration is a listed future).
+- **Registration hardening (2026-07-30, user request):** bots are the concern once the app is public, so signup is now either **social OAuth** (Google/GitHub/LinkedIn - the provider has already vetted the human) or **email with a 6-digit OTP**. Both are **config-gated**: with no mail transport and no OAuth credentials (the default LAN case) plain email signup still works instantly, so nothing about the home Wi-Fi flow regresses. **Usernames are never chosen by users** - the server derives a handle - because a username field is friction that buys nothing when email is the identifier.
+- **Mail transport: Resend HTTP API preferred, SMTP fallback.** Resend needs one API key and no port/TLS wrangling, has a usable free tier, and works from hosts that block outbound SMTP (most PaaS). SMTP stays supported for self-hosters. `httpx` becomes a runtime dependency (needed for OAuth token exchange anyway).
+- **OAuth token returns in the URL fragment**, never the query string: fragments are not sent to the server, so the session token cannot land in access logs, proxy logs, or the Referer header.
 - Ports 8100/3100 chosen to avoid colliding with the user's other project (8000/3000).
 - **Design pivot (2026-07-29, user request):** the original dark "NightShift" theme was replaced by the light "Worklight" system above, following the Anthropic frontend-design skill: dark-bg-plus-single-bright-accent is a generic AI default; a professional daily-use tool wants a monochrome ink interface where color only encodes status meaning, usability-first microcopy, and minimal motion.
 - **Adversarial-review hardening (2026-07-29):** last-member leave is blocked (no code path may destroy group data); leave deletes the leaver's applications/portal statuses; upsert/join races handle IntegrityError instead of 500ing; CSV cells starting with `= + - @` TAB CR are quote-prefixed (formula-injection guard); `?access_token=` is scoped to SSE + exports and redacted from access logs; PBKDF2 runs off the event loop with a per-user+IP login throttle (429); JWT base64 decoding is strict; `data/.secret` is written 0600; SSE queues are bounded (500) and re-check membership per event; company search escapes LIKE wildcards; request bodies capped (1 MB + field length limits); user-supplied URLs render through a `safeHref` http/https allowlist. Known accepted v1 limits: SSE publish happens just before commit (harmless: clients reconcile on refetch), no pagination on activity beyond `limit`, archived companies have no UI control yet.

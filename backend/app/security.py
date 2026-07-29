@@ -98,3 +98,52 @@ def jwt_decode(token: str, secret: str) -> dict | None:
 def make_token(user_id: int, secret: str, ttl_hours: int) -> str:
     payload = {"sub": str(user_id), "exp": int(time.time()) + ttl_hours * 3600}
     return jwt_encode(payload, secret)
+
+
+OTP_DIGITS = 6
+
+
+def generate_otp() -> str:
+    """Crypto-random 6-digit signup code, zero padded."""
+    return f"{secrets.randbelow(1_000_000):0{OTP_DIGITS}d}"
+
+
+def hash_otp(code: str, email: str, secret: str) -> str:
+    """HMAC-SHA256 of the code, bound to the email so a code cannot be
+    replayed against a different pending row. Plaintext codes are never
+    stored or logged."""
+    message = f"{email.strip().lower()}:{code}".encode()
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def verify_otp(code: str, email: str, secret: str, stored_hash: str) -> bool:
+    return hmac.compare_digest(hash_otp(code, email, secret), stored_hash)
+
+
+OAUTH_STATE_TTL_SECONDS = 600
+
+
+def make_state_token(payload: dict, secret: str, ttl_seconds: int = OAUTH_STATE_TTL_SECONDS) -> str:
+    """Sign short-lived OAuth state (PKCE verifier, provider, next path).
+
+    Reuses the JWT machinery so no server-side session store is needed.
+    """
+    body = dict(payload)
+    body["exp"] = int(time.time()) + ttl_seconds
+    return jwt_encode(body, secret)
+
+
+def read_state_token(token: str, secret: str) -> dict | None:
+    """Verify signature and expiry; None when tampered with or stale."""
+    return jwt_decode(token, secret)
+
+
+def make_pkce_verifier() -> str:
+    """RFC 7636 code_verifier: 43-128 chars from the unreserved alphabet."""
+    return _b64url_encode(secrets.token_bytes(32))
+
+
+def pkce_challenge(verifier: str) -> str:
+    """S256 challenge for a verifier."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return _b64url_encode(digest)

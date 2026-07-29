@@ -4,7 +4,13 @@ import re
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .models import (
     Activity,
@@ -23,8 +29,6 @@ ApplicationStatus = Literal[
 ]
 PortalMemberStatus = Literal["none", "signed_up", "active", "abandoned"]
 
-_USERNAME_RE = re.compile(r"^[a-z0-9_]{3,30}$")
-
 # Size caps for user-supplied text (defense in depth with the 1 MB body cap).
 NAME_MAX = 120
 URL_MAX = 2000
@@ -34,17 +38,11 @@ TagStr = Annotated[str, StringConstraints(max_length=50)]
 
 
 class RegisterIn(BaseModel):
-    username: str = Field(max_length=200)
-    display_name: str = Field(max_length=NAME_MAX)
-    password: str = Field(min_length=8, max_length=200)
+    """Signup body. There is no username field: the server derives the handle."""
 
-    @field_validator("username")
-    @classmethod
-    def _normalize_username(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not _USERNAME_RE.fullmatch(value):
-            raise ValueError("username must be 3-30 chars of a-z, 0-9 or _")
-        return value
+    display_name: str = Field(max_length=NAME_MAX)
+    email: str = Field(max_length=320)
+    password: str = Field(min_length=8, max_length=200)
 
     @field_validator("display_name")
     @classmethod
@@ -54,10 +52,67 @@ class RegisterIn(BaseModel):
             raise ValueError("display_name must not be blank")
         return value
 
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return _normalize_email_value(value)
+
 
 class LoginIn(BaseModel):
-    username: str = Field(max_length=200)
+    """`identifier` is an email or a username. The legacy {username, password}
+    body still works so pre-existing accounts and clients keep signing in."""
+
+    identifier: str | None = Field(default=None, max_length=320)
+    username: str | None = Field(default=None, max_length=320)
     password: str = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def _require_an_identifier(self) -> "LoginIn":
+        if not (self.identifier or self.username):
+            raise ValueError("identifier is required")
+        return self
+
+    @property
+    def login_key(self) -> str:
+        return (self.identifier or self.username or "").strip().lower()
+
+
+# Conservative email check: Pydantic's EmailStr needs the email-validator
+# package and this project deliberately adds no dependencies. This catches
+# typos and junk without trying to be RFC-complete.
+_EMAIL_RE = re.compile(
+    r"[^@\s,;:<>\"]+@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+"
+)
+
+
+def _normalize_email_value(value: str) -> str:
+    value = value.strip().lower()
+    if len(value) > 320 or not _EMAIL_RE.fullmatch(value):
+        raise ValueError("enter a valid email address")
+    return value
+
+
+class RegisterStartIn(RegisterIn):
+    """Same body as RegisterIn: {display_name, email, password}."""
+
+
+class RegisterVerifyIn(BaseModel):
+    email: str = Field(max_length=320)
+    code: str = Field(max_length=12)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        return _normalize_email_value(value)
+
+    @field_validator("code")
+    @classmethod
+    def _code_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("code must not be blank")
+        return value
 
 
 class GroupCreateIn(BaseModel):
@@ -172,7 +227,13 @@ def iso_date(d: date | None) -> str | None:
 
 
 def serialize_user(user: User) -> dict:
-    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+    }
 
 
 def serialize_group(group: Group, member_count: int) -> dict:

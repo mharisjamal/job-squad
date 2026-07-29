@@ -3,12 +3,30 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+# Optional integrations must be OFF for the base test app, whatever the
+# ambient environment (or a concurrently active fixture) has set.
+OPTIONAL_ENV_VARS = (
+    "JOBSQUAD_RESEND_API_KEY",
+    "JOBSQUAD_MAIL_FROM",
+    "JOBSQUAD_SMTP_HOST",
+    "JOBSQUAD_SMTP_USER",
+    "JOBSQUAD_SMTP_PASSWORD",
+    "JOBSQUAD_GOOGLE_CLIENT_ID",
+    "JOBSQUAD_GOOGLE_CLIENT_SECRET",
+    "JOBSQUAD_GITHUB_CLIENT_ID",
+    "JOBSQUAD_GITHUB_CLIENT_SECRET",
+    "JOBSQUAD_LINKEDIN_CLIENT_ID",
+    "JOBSQUAD_LINKEDIN_CLIENT_SECRET",
+)
+
 
 @pytest.fixture
 async def asgi_app(tmp_path, monkeypatch):
     monkeypatch.setenv("JOBSQUAD_DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("JOBSQUAD_SECRET", "test-secret-not-for-production")
     monkeypatch.setenv("JOBSQUAD_TOKEN_TTL_HOURS", "1")
+    for name in OPTIONAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
     from app.main import create_app
 
     application = create_app()
@@ -25,12 +43,17 @@ async def client(asgi_app):
 
 @pytest.fixture
 def register(client):
-    async def _register(username="haris", password="password123", display_name=None):
+    """Create an account. `username` is the handle the server should derive:
+    it is sent as the email local part, so tests can still assert on it."""
+
+    async def _register(
+        username="haris", password="password123", display_name=None, email=None
+    ):
         resp = await client.post(
             "/api/auth/register",
             json={
-                "username": username,
                 "display_name": display_name or username.title(),
+                "email": email or f"{username}@example.com",
                 "password": password,
             },
         )

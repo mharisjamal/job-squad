@@ -35,9 +35,47 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Auto-derived internal handle; never chosen by the user.
     username: Mapped[str] = mapped_column(String(30), unique=True)
     display_name: Mapped[str] = mapped_column(Text)
+    # Null for social-only accounts (they cannot use password login).
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserIdentity(Base):
+    """A social login linked to a user account."""
+
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_user_id", name="uq_identity_provider_uid"),
+        Index("ix_user_identities_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_user_id: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PendingRegistration(Base):
+    """A signup awaiting email-OTP verification. Never holds a plaintext code."""
+
+    __tablename__ = "pending_registrations"
+    __table_args__ = (Index("ix_pending_registrations_email", "email"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    display_name: Mapped[str] = mapped_column(Text)
     password_hash: Mapped[str] = mapped_column(Text)
+    otp_hash: Mapped[str] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    last_sent_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

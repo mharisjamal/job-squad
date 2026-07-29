@@ -17,7 +17,25 @@ OPTIONAL_ENV_VARS = (
     "JOBSQUAD_GITHUB_CLIENT_SECRET",
     "JOBSQUAD_LINKEDIN_CLIENT_ID",
     "JOBSQUAD_LINKEDIN_CLIENT_SECRET",
+    "DATABASE_URL",
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _load_env_files_once():
+    """Consume any developer .env up front so a later Settings.load() cannot
+    re-inject its values after a fixture has deliberately cleared them."""
+    from app.config import load_env_files
+
+    load_env_files()
+
+
+@pytest.fixture(autouse=True)
+def isolated_env(monkeypatch):
+    """Every test app runs on local SQLite with all integrations off, even on
+    a machine whose .env configures a real database or provider."""
+    for name in OPTIONAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

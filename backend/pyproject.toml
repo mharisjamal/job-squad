@@ -8,6 +8,8 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
+    # Postgres driver used when DATABASE_URL is set (Render + Neon).
+    "asyncpg>=0.29",
     "pydantic>=2.7",
     "sse-starlette>=2.1",
     # Runtime HTTP client: Resend mail API plus the OAuth token/profile calls.

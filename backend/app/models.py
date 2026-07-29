@@ -13,7 +13,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Portable JSON that becomes JSONB on Postgres (indexable, stored parsed).
+JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 APPLICATION_STATUSES = (
     "saved", "applied", "assessment", "interview", "offer", "rejected", "ghosted",
@@ -113,7 +117,7 @@ class Company(Base):
     website: Mapped[str | None] = mapped_column(Text)
     careers_url: Mapped[str | None] = mapped_column(Text)
     location: Mapped[str | None] = mapped_column(Text)
-    tags: Mapped[list] = mapped_column(JSON, default=list)
+    tags: Mapped[list] = mapped_column(JSONType, default=list)
     notes: Mapped[str | None] = mapped_column(Text)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -194,5 +198,5 @@ class Activity(Base):
     type: Mapped[str] = mapped_column(String(40))
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id", ondelete="SET NULL"))
     portal_id: Mapped[int | None] = mapped_column(ForeignKey("portals.id", ondelete="SET NULL"))
-    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    detail: Mapped[dict] = mapped_column(JSONType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

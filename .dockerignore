@@ -1,0 +1,17 @@
+.git
+.gitignore
+**/node_modules
+**/.venv
+**/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+data
+.env
+**/.env
+*.md
+!README.md
+docs
+START.bat
+run.py

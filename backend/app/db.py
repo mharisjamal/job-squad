@@ -1,6 +1,12 @@
-"""Async SQLite engine/session factory and schema initialization."""
+"""Database engine/session factory and schema initialization.
+
+Two backends: local SQLite (the zero-configuration default) and Postgres when
+DATABASE_URL is set (Render + Neon). Everything SQLite-specific (the PRAGMAs
+and the hand-rolled migration) is branched on the dialect.
+"""
 
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
@@ -12,8 +18,68 @@ from sqlalchemy.ext.asyncio import (
 
 from .models import Base
 
+# Render's free instance has 512 MB, and Neon's free tier is connection-frugal.
+POSTGRES_POOL_SIZE = 5
+POSTGRES_MAX_OVERFLOW = 5
+_SSL_REQUIRED_MODES = ("require", "verify-ca", "verify-full")
 
-def make_engine(db_path: Path) -> AsyncEngine:
+
+def normalize_database_url(raw: str) -> tuple[str, dict]:
+    """Turn a hosted Postgres URL into an asyncpg URL plus connect_args.
+
+    Neon and Render hand out URLs like
+    postgresql://u:p@host/db?sslmode=require&channel_binding=require
+    asyncpg understands neither query parameter and raises on them, so every
+    parameter is stripped and TLS is passed through connect_args instead.
+
+    Also disables prepared statement caching on both layers: Neon's "-pooler"
+    host is PgBouncer in transaction mode, where cached prepared statements
+    break. asyncpg's own cache is turned off through connect_args, and
+    SQLAlchemy's wrapper cache through the one query parameter it consumes
+    itself (prepared_statement_cache_size never reaches asyncpg). Applied to
+    every Postgres URL: harmless on a direct connection, impossible to forget
+    when the host later moves behind the pooler.
+    """
+    parts = urlsplit(raw.strip())
+    scheme = parts.scheme.lower()
+    if scheme in ("postgres", "postgresql") or scheme.startswith("postgresql+"):
+        sslmode = ""
+        for chunk in parts.query.split("&"):
+            key, _, value = chunk.partition("=")
+            if key.strip().lower() == "sslmode":
+                sslmode = value.strip().lower()
+        url = urlunsplit(
+            (
+                "postgresql+asyncpg",
+                parts.netloc,
+                parts.path,
+                "prepared_statement_cache_size=0",
+                "",
+            )
+        )
+        connect_args: dict = {"statement_cache_size": 0}
+        if sslmode in _SSL_REQUIRED_MODES:
+            connect_args["ssl"] = True
+        return url, connect_args
+    # Anything else (a full SQLAlchemy URL, say) is passed through untouched.
+    return raw.strip(), {}
+
+
+def make_engine(db_path: Path | None = None, database_url: str | None = None) -> AsyncEngine:
+    """Postgres when database_url is given, else local SQLite at db_path."""
+    if database_url:
+        url, connect_args = normalize_database_url(database_url)
+        return create_async_engine(
+            url,
+            echo=False,
+            connect_args=connect_args,
+            pool_pre_ping=True,
+            pool_size=POSTGRES_POOL_SIZE,
+            max_overflow=POSTGRES_MAX_OVERFLOW,
+        )
+
+    if db_path is None:
+        raise ValueError("make_engine needs either db_path or database_url")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}", echo=False)
 
@@ -31,10 +97,15 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db(engine: AsyncEngine) -> None:
+    is_sqlite = engine.dialect.name == "sqlite"
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text("PRAGMA journal_mode=WAL"))
-    await _migrate(engine)
+        if is_sqlite:
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+    if is_sqlite:
+        # The hand-rolled migration below is SQLite-only. A Postgres
+        # deployment starts from an empty database, so create_all is enough.
+        await _migrate(engine)
 
 
 async def _migrate(engine: AsyncEngine) -> None:

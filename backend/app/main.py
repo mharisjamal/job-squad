@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="JobSquad", lifespan=lifespan)
     app.state.settings = settings
-    app.state.engine = make_engine(settings.db_path)
+    app.state.engine = make_engine(settings.db_path, settings.database_url)
     app.state.sessionmaker = make_sessionmaker(app.state.engine)
     app.state.broker = ActivityBroker()
 

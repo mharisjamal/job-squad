@@ -1,166 +1,158 @@
 # Deploying JobSquad
 
-JobSquad is one process listening on one port (default 8100) with all state in `data/`. Every option below boils down to: get that process running somewhere your friends can reach.
+The chosen path: **Render** runs the app as a Docker web service, **Neon** holds the Postgres database, an **is-a.dev** subdomain gives it a clean name, and **UptimeRobot** pings it so the free instance stays awake. Total cost: nothing.
 
-Options are ordered by effort. For a group of friends, Option A or C is usually right.
+Local and LAN use is unchanged and needs no configuration: with no `DATABASE_URL` set, JobSquad uses SQLite at `data/jobsquad.db` exactly as before. Run `START.bat` and ignore this whole document.
 
-## Option A: LAN only (the default)
+---
 
-Nothing to configure.
+## 1. Create the database (Neon)
 
-1. Run `START.bat` (or `python run.py`).
-2. When Windows Firewall asks about Python (and Node in dev mode), click **Allow**.
-3. The launcher prints two URLs. You use the Local one; everyone else on the same Wi-Fi uses the **Network** one, for example `http://192.168.1.23:8100`.
-
-Limits: your machine must stay on and awake (check your sleep settings), and the URL only works from your own network. Your router may hand your PC a different IP now and then; the launcher always prints the current one.
-
-## Option B: free 24/7 VM on Oracle Cloud (Always Free, Ampere A1)
-
-Oracle's Always Free tier includes an Ampere A1 ARM VM (up to 4 cores / 24 GB total) that runs JobSquad comfortably at zero cost. About 15 minutes of setup.
-
-1. **Create the VM.** Sign up at oracle.com/cloud (card needed for identity, not charged). Create instance: image **Ubuntu 24.04 (aarch64)**, shape **VM.Standard.A1.Flex** (1 OCPU / 6 GB is plenty). Add your SSH key and note the public IP.
-
-2. **Open port 8100 in the cloud firewall.** Instance page -> Virtual cloud network -> your subnet's **Security List** -> Add Ingress Rule: Source CIDR `0.0.0.0/0`, protocol TCP, destination port `8100`.
-
-3. **Open port 8100 on the VM itself.**
-
-   ```bash
-   sudo ufw allow 8100/tcp    # if ufw is active
-   ```
-
-   Oracle's Ubuntu images also ship iptables rules that reject everything except SSH. If the port still does not answer:
-
-   ```bash
-   sudo iptables -I INPUT 5 -p tcp --dport 8100 -j ACCEPT
-   sudo netfilter-persistent save
-   ```
-
-4. **Install uv and Node** (both have standard ARM builds):
-
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   source $HOME/.local/bin/env
-   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-   sudo apt-get install -y nodejs
-   ```
-
-5. **Get the code onto the VM**: `git clone` your repo, or copy the folder with `scp -r`.
-
-6. **First run by hand**, to download dependencies and build the frontend:
-
-   ```bash
-   cd ~/JobSquad
-   python3 run.py
-   ```
-
-   Wait for the URL box and "API is up", check `http://<public-ip>:8100` from your browser, then press Ctrl+C.
-
-7. **Run it under systemd** so it survives reboots and crashes. Create `/etc/systemd/system/jobsquad.service`:
-
-   ```ini
-   [Unit]
-   Description=JobSquad (the multiplayer job hunt)
-   After=network-online.target
-   Wants=network-online.target
-
-   [Service]
-   User=ubuntu
-   WorkingDirectory=/home/ubuntu/JobSquad
-   ExecStart=/usr/bin/python3 run.py
-   Restart=always
-   RestartSec=5
-   Environment=JOBSQUAD_SECRET=replace-with-a-long-random-string
-   Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-
-   The `PATH` line matters: uv installs to `~/.local/bin`, which systemd does not search by default. Generate the secret with:
-
-   ```bash
-   python3 -c "import secrets; print(secrets.token_hex(32))"
-   ```
-
-   Then:
-
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now jobsquad
-   journalctl -u jobsquad -f     # watch the logs
-   ```
-
-   In real deployments always set `JOBSQUAD_SECRET` explicitly (as above) instead of relying on the auto-generated `data/.secret`.
-
-Your app is now at `http://<public-ip>:8100`, 24/7. Read the HTTPS note below before sharing that URL widely.
-
-## Option C: Cloudflare Tunnel from an always-on home PC
-
-If some PC at home stays on anyway, you can expose JobSquad over HTTPS without opening any router ports. The app keeps listening on `localhost:8100`; `cloudflared` makes an outbound connection and serves it at a public HTTPS URL.
-
-1. Keep JobSquad running locally (`START.bat`; add it to Startup or Task Scheduler, and disable PC sleep).
-2. Install cloudflared: `winget install Cloudflare.cloudflared`.
-3. **For testing** (URL changes on every run):
+1. Sign up at [neon.tech](https://neon.tech) (free tier, no card) and create a project. Any region works; pick one near your users.
+2. Open **Connection Details** and copy the **Pooled connection** string. It looks like:
 
    ```
-   cloudflared tunnel --url http://localhost:8100
+   postgresql://USER:PASSWORD@ep-something-123456-pooler.REGION.aws.neon.tech/neondb?sslmode=require&channel_binding=require
    ```
 
-   You get a random `https://something.trycloudflare.com` URL to share.
+   Use the **pooled** one (the host contains `-pooler`). Neon's free tier suspends idle databases and the pooler handles reconnects far better.
 
-4. **For a stable URL** (named tunnel): you need a domain on a free Cloudflare account (any cheap domain works; some registrars hand out free subdomains).
+You do not need to create any tables. The app creates its schema on first boot.
 
+## 2. Create the web service (Render)
+
+1. Push this repo to GitHub, then at [render.com](https://render.com): **New +** -> **Web Service** -> connect the repo.
+2. Settings:
+
+   | Setting | Value |
+   |---|---|
+   | Language / Runtime | **Docker** |
+   | Branch | `main` |
+   | Region | same continent as your Neon project |
+   | Instance type | **Free** |
+   | Dockerfile path | `./Dockerfile` |
+   | Health check path | **`/health`** |
+
+   The repo also contains `render.yaml`, so you can instead use **New +** -> **Blueprint** and let Render read those settings itself. Either way the environment variables below are still pasted by hand.
+
+3. Add the environment variables (**Environment** tab):
+
+   | Key | Value |
+   |---|---|
+   | `DATABASE_URL` | the pooled Neon string from step 1 |
+   | `JOBSQUAD_SECRET` | a long random string (Render's **Generate** button is fine) |
+   | `JOBSQUAD_PUBLIC_URL` | your final URL, e.g. `https://jobsquad.is-a.dev` |
+
+   Optional, only if you want those features:
+
+   | Key | Purpose |
+   |---|---|
+   | `JOBSQUAD_RESEND_API_KEY` + `JOBSQUAD_MAIL_FROM` | email-OTP signup (turns registration into verify-by-code) |
+   | `JOBSQUAD_GOOGLE_CLIENT_ID` / `_SECRET` | "Continue with Google" |
+   | `JOBSQUAD_GITHUB_CLIENT_ID` / `_SECRET` | "Continue with GitHub" |
+   | `JOBSQUAD_LINKEDIN_CLIENT_ID` / `_SECRET` | "Continue with LinkedIn" |
+
+   Do **not** set `PORT`: Render injects it and the container binds it automatically.
+
+4. Deploy. The first build takes a few minutes (it builds the frontend, then installs Python dependencies). When the health check at `/health` goes green, open the `onrender.com` URL.
+
+`JOBSQUAD_SECRET` must stay stable: changing it signs everyone out, because it signs the session tokens.
+
+## 3. Point a free domain at it (is-a.dev)
+
+[is-a.dev](https://is-a.dev) hands out free `yourname.is-a.dev` subdomains by pull request.
+
+1. In Render: **Settings** -> **Custom Domains** -> add `jobsquad.is-a.dev`. Render shows a target host like `jobsquad-xxxx.onrender.com`.
+2. Fork [is-a-dev/register](https://github.com/is-a-dev/register), add `domains/jobsquad.json`:
+
+   ```json
+   {
+     "owner": { "username": "your-github-username", "email": "you@example.com" },
+     "record": { "CNAME": "jobsquad-xxxx.onrender.com" }
+   }
    ```
-   cloudflared tunnel login
-   cloudflared tunnel create jobsquad
-   cloudflared tunnel route dns jobsquad jobs.yourdomain.com
-   ```
 
-   Create `%USERPROFILE%\.cloudflared\config.yml`:
+   Open the pull request and wait for it to merge (usually a day or two).
+3. Once DNS resolves, Render issues the TLS certificate on its own. Then set `JOBSQUAD_PUBLIC_URL` to `https://jobsquad.is-a.dev` and redeploy, so OAuth redirect URIs point at the real domain.
 
-   ```yaml
-   tunnel: jobsquad
-   credentials-file: C:\Users\YOU\.cloudflared\<tunnel-id>.json
-   ingress:
-     - hostname: jobs.yourdomain.com
-       service: http://localhost:8100
-     - service: http_status:404
-   ```
+If you enabled social sign-in, register these callback URLs with each provider:
 
-   Then `cloudflared service install` runs it at boot. Your friends get HTTPS, and your home IP stays hidden.
+```
+https://jobsquad.is-a.dev/api/auth/oauth/google/callback
+https://jobsquad.is-a.dev/api/auth/oauth/github/callback
+https://jobsquad.is-a.dev/api/auth/oauth/linkedin/callback
+```
 
-## Option D: Render / Fly / Railway (read this first)
+## 4. Keep it awake (UptimeRobot)
 
-Free PaaS tiers have **ephemeral disks**: the filesystem is thrown away on every deploy, restart, or scale event. JobSquad stores everything in `data/jobsquad.db`, so on such a tier **your squad's data is silently lost**.
+Render's free instances sleep after about 15 minutes idle, and the next visitor waits roughly 50 seconds for a cold start.
 
-- **Render free tier**: no persistent disk on free services (disks are a paid feature). Not suitable.
-- **Fly.io**: works if you create a volume and mount it at the data directory (`fly volumes create`), but free allowances have shifted over time; check current pricing.
-- **Railway**: volumes exist, free hours are limited.
+1. Sign up at [uptimerobot.com](https://uptimerobot.com) (free).
+2. **Add New Monitor**: type **HTTP(s)**, URL `https://jobsquad.is-a.dev/health`, interval **5 minutes**.
 
-For zero cost with real persistence, prefer Option B (Oracle A1) or Option C (tunnel).
+`/health` needs no authentication and only pings the database, so it is cheap to call. This also gives you email alerts when the app goes down.
+
+Note: Render's free plan has a monthly instance-hours budget. Pinging around the clock consumes it faster than idling does; if you run out before month end, raise the interval or pause the monitor overnight.
+
+---
 
 ## Backups
 
-All state is `data/jobsquad.db` (plus `data/.secret` if you did not set `JOBSQUAD_SECRET`).
+State lives in Postgres now, so back up the Neon database.
 
-- Simplest: stop JobSquad, copy `data/jobsquad.db` somewhere safe, start again.
-- While running: the database is in WAL mode, so a plain copy is usually fine, but the safe way is a consistent snapshot:
+- **Dump** (needs the `postgresql-client` package locally, version 16 or newer):
 
   ```bash
-  sqlite3 data/jobsquad.db ".backup jobsquad-backup.db"
+  pg_dump "postgresql://USER:PASSWORD@ep-something-pooler.REGION.aws.neon.tech/neondb?sslmode=require" \
+    -Fc -f jobsquad-backup.dump
   ```
 
-- Restore: stop JobSquad, put the backup file back as `data/jobsquad.db`, start.
+  Use the connection string exactly as Neon gives it (with `sslmode=require`); `pg_dump` understands those parameters even though the app strips them for asyncpg.
 
-## HTTPS
+- **Restore** into an empty database:
 
-Port 8100 speaks plain HTTP. On a LAN that is fine; over the internet, do not send passwords in the clear:
-
-- **Easiest**: Option C (Cloudflare Tunnel) gives you HTTPS automatically.
-- **On your own VM**: put [Caddy](https://caddyserver.com) in front; it fetches certificates automatically. Point your domain's DNS at the VM, open ports 80/443, and use this entire Caddyfile:
-
+  ```bash
+  pg_restore --clean --if-exists -d "postgresql://.../neondb?sslmode=require" jobsquad-backup.dump
   ```
-  jobs.yourdomain.com {
-      reverse_proxy localhost:8100
-  }
-  ```
+
+- Neon's own console also offers point-in-time restore on the free tier (a rolling window of a few days). That covers "I deleted the wrong thing" without any dump.
+
+**Running locally instead?** Then state is still the single file `data/jobsquad.db` (plus `data/.secret` if you never set `JOBSQUAD_SECRET`). Stop the app and copy the file, or take a live consistent snapshot:
+
+```bash
+sqlite3 data/jobsquad.db ".backup jobsquad-backup.db"
+```
+
+Restore by putting the file back as `data/jobsquad.db` while the app is stopped.
+
+## Configuration reference
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | unset | Postgres URL. **Unset means local SQLite** at `JOBSQUAD_DB_PATH` |
+| `PORT` | unset | Injected by Render; the server binds it |
+| `JOBSQUAD_PORT` | `8100` | Port when `PORT` is not set |
+| `JOBSQUAD_DB_PATH` | `data/jobsquad.db` | SQLite file (ignored when `DATABASE_URL` is set) |
+| `JOBSQUAD_SECRET` | auto-generated to `data/.secret` | Signs session tokens. Always set this in a real deployment |
+| `JOBSQUAD_TOKEN_TTL_HOURS` | `168` | Session lifetime |
+| `JOBSQUAD_PUBLIC_URL` | `http://localhost:8100` | Public base URL; builds OAuth redirect URIs |
+
+These can also live in a `.env` file at the repo root or in `backend/`, which is handy locally. Real environment variables always win over the file, so a stray `.env` can never override what you set in Render. Never commit `.env`: it is gitignored.
+
+## Running the container yourself
+
+The same image works anywhere Docker does:
+
+```bash
+docker build -t jobsquad .
+docker run -p 8100:8100 -e DATABASE_URL="postgresql://..." -e JOBSQUAD_SECRET="..." jobsquad
+```
+
+Without `DATABASE_URL` it falls back to SQLite inside the container, in which case mount a volume at `/app/data` or the data disappears with the container.
+
+## Alternatives
+
+If you would rather not depend on a host at all, two options that were considered and still work:
+
+- **LAN only**: run `START.bat`, allow Python through Windows Firewall, and share the Network URL the launcher prints. Free, private, and only reachable from your own Wi-Fi while your machine is awake.
+- **Cloudflare Tunnel** from an always-on home PC: `cloudflared tunnel --url http://localhost:8100` gives an HTTPS URL without opening router ports, and a named tunnel gives a stable hostname. Data stays on your machine in SQLite.

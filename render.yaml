@@ -1,0 +1,22 @@
+# Render blueprint for JobSquad. No secret values belong in this file:
+# every sync:false variable is pasted into the Render dashboard once.
+services:
+  - type: web
+    name: jobsquad
+    env: docker
+    plan: free
+    region: oregon
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      # Neon pooled connection string (the host containing "-pooler").
+      - key: DATABASE_URL
+        sync: false
+      # Generated once by Render and kept across deploys, so tokens survive.
+      - key: JOBSQUAD_SECRET
+        generateValue: true
+      # Public URL of this service; OAuth redirect URIs are built from it.
+      - key: JOBSQUAD_PUBLIC_URL
+        sync: false

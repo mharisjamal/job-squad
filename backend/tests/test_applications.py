@@ -18,15 +18,18 @@ async def test_put_upsert_creates_then_updates(client, register, make_group, mak
     assert first["company_name"] == "TechCorp"
     assert first["user_id"] == account["user"]["id"]
 
+    # Merge semantics: a status-only PUT updates status and preserves the rest.
     resp = await client.put(
         f"/api/companies/{company['id']}/application",
-        json={"status": "interview", "applied_at": "2026-07-20"},
+        json={"status": "interview"},
         headers=account["headers"],
     )
     assert resp.status_code == 200
     second = resp.json()
     assert second["id"] == first["id"]  # same row, not a new one
     assert second["status"] == "interview"
+    assert second["applied_at"] == "2026-07-20"
+    assert second["notes"] == "CV v3"
 
     resp = await client.get(
         f"/api/groups/{group['id']}/applications",
@@ -36,6 +39,97 @@ async def test_put_upsert_creates_then_updates(client, register, make_group, mak
     rows = resp.json()
     assert len(rows) == 1
     assert rows[0]["status"] == "interview"
+
+
+async def test_create_with_status_only_leaves_fields_null(
+    client, register, make_group, make_company
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "saved"},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["status"] == "saved"
+    for field in ("applied_via_portal_id", "applied_via_portal_name", "applied_at",
+                  "follow_up_at", "url", "notes"):
+        assert row[field] is None
+
+
+async def test_status_only_put_preserves_all_other_fields(
+    client, register, make_group, make_company, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    portal = await make_portal(account["headers"], group["id"], name="LinkedIn")
+
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={
+            "status": "applied",
+            "applied_via_portal_id": portal["id"],
+            "applied_at": "2026-07-20",
+            "follow_up_at": "2026-08-01",
+            "url": "https://techcorp.example/jobs/1",
+            "notes": "CV v3",
+        },
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+
+    # The kanban drag / inline select sends only the status.
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "interview"},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["status"] == "interview"
+    assert row["applied_via_portal_id"] == portal["id"]
+    assert row["applied_via_portal_name"] == "LinkedIn"
+    assert row["applied_at"] == "2026-07-20"
+    assert row["follow_up_at"] == "2026-08-01"
+    assert row["url"] == "https://techcorp.example/jobs/1"
+    assert row["notes"] == "CV v3"
+
+
+async def test_explicit_null_clears_only_that_field(
+    client, register, make_group, make_company, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    portal = await make_portal(account["headers"], group["id"], name="LinkedIn")
+
+    await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={
+            "status": "applied",
+            "applied_via_portal_id": portal["id"],
+            "url": "https://techcorp.example/jobs/1",
+            "notes": "CV v3",
+        },
+        headers=account["headers"],
+    )
+
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "interview", "notes": None},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["notes"] is None
+    assert row["url"] == "https://techcorp.example/jobs/1"
+    assert row["applied_via_portal_id"] == portal["id"]
+    assert row["applied_via_portal_name"] == "LinkedIn"
 
 
 async def test_status_change_writes_activity_with_detail(

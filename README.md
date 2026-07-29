@@ -92,4 +92,4 @@ Accounts are simple username + password, built for a private deployment among fr
 
 ## Later ideas
 
-Deliberately not in v1: password reset, email or push notifications, invite-only registration, removing members or deleting groups, avatar uploads, a light theme, and a Postgres option (the SQL is kept portable, so that stays a config swap away).
+Deliberately not in v1: password reset, email or push notifications, invite-only registration, removing members or deleting groups, avatar uploads, a dark theme, and a Postgres option (the SQL is kept portable, so that stays a config swap away).

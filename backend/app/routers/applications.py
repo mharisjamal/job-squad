@@ -33,9 +33,9 @@ async def upsert_application(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     company = await get_company_for_member(session, cid, user)
-    portal: Portal | None = None
-    if body.applied_via_portal_id is not None:
-        portal = await session.get(Portal, body.applied_via_portal_id)
+    provided = body.model_dump(exclude_unset=True)
+    if provided.get("applied_via_portal_id") is not None:
+        portal = await session.get(Portal, provided["applied_via_portal_id"])
         if portal is None or portal.group_id != company.group_id:
             raise HTTPException(status_code=422, detail="Unknown portal for this group")
     row = await session.scalar(
@@ -47,12 +47,14 @@ async def upsert_application(
     if row is None:
         row = Application(company_id=cid, user_id=user.id, status=body.status)
         session.add(row)
-    row.status = body.status
-    row.applied_via_portal_id = body.applied_via_portal_id
-    row.applied_at = body.applied_at
-    row.follow_up_at = body.follow_up_at
-    row.url = body.url
-    row.notes = body.notes
+    # Merge semantics: only fields present in the request JSON are applied.
+    # An explicit null clears the column; an omitted field is left unchanged
+    # on an existing row and defaults to null on create.
+    for field in (
+        "status", "applied_via_portal_id", "applied_at", "follow_up_at", "url", "notes"
+    ):
+        if field in provided:
+            setattr(row, field, provided[field])
     row.updated_at = utcnow()
     await session.flush()
     if old_status != body.status:
@@ -66,7 +68,12 @@ async def upsert_application(
             detail={"from": old_status, "to": body.status},
         )
     await session.commit()
-    return serialize_application_full(row, user, company.name, portal.name if portal else None)
+    portal_name = None
+    if row.applied_via_portal_id is not None:
+        portal_name = await session.scalar(
+            select(Portal.name).where(Portal.id == row.applied_via_portal_id)
+        )
+    return serialize_application_full(row, user, company.name, portal_name)
 
 
 @router.delete("/companies/{cid}/application")

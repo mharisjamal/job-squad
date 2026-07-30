@@ -53,7 +53,7 @@ async def test_gemini_preset_fills_base_url_and_model(client, register):
     body = resp.json()
     assert body["provider"] == "gemini"
     assert body["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
-    assert body["model"] == "gemini-2.5-flash"
+    assert body["model"] == "gemini-2.0-flash"
     assert body["key_set"] is True
     # The key is NEVER echoed back.
     assert "key" not in body

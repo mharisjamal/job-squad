@@ -21,7 +21,10 @@ router = APIRouter(tags=["settings"])
 AI_PRESETS: dict[str, dict[str, str]] = {
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "model": "gemini-2.5-flash",
+        # gemini-2.5-flash was blocked for new API keys by Google (404 "no longer
+        # available to new users"), so the default is the current free-tier flash.
+        # The model field stays user-editable for when Google rotates it again.
+        "model": "gemini-2.0-flash",
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",

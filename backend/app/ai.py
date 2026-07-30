@@ -54,7 +54,11 @@ async def chat_completion(
     if response.status_code == 404:
         raise AIError("The AI endpoint or model was not found. Check the base URL and model.")
     if response.status_code == 429:
-        raise AIError("The AI provider is rate limiting. Try again in a moment.")
+        raise AIError(
+            "Rate limited, or your free-tier quota is used up. Wait a minute and retry. "
+            "If it keeps happening, your key may have no free quota (Gemini's free tier is "
+            "not available in every region) - try a Groq key instead, it is free worldwide."
+        )
     if response.status_code >= 500:
         raise AIError("The AI provider had a server error. Try again.")
     if response.status_code >= 400:

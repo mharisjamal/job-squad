@@ -16,7 +16,7 @@ export const AI_PRESETS: Record<Exclude<AiProvider, "custom">, AiPreset> = {
     value: "gemini",
     label: "Gemini (recommended)",
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    model: "gemini-2.5-flash",
+    model: "gemini-2.0-flash",
   },
   groq: {
     value: "groq",

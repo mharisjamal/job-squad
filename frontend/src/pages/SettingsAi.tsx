@@ -192,7 +192,7 @@ export default function SettingsAi() {
                 className="input font-mono"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. gemini-2.5-flash"
+                placeholder="e.g. gemini-2.0-flash"
                 spellCheck={false}
               />
             </div>

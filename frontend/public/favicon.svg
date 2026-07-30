@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>JobSquad</title>
+  <rect width="32" height="32" rx="7" fill="#0B0C0E"/>
+  <!-- The app's signature motif: an avatar wearing its status ring. -->
+  <circle cx="16" cy="16" r="8.3" fill="none" stroke="#3FA875" stroke-width="3.3"/>
+  <circle cx="16" cy="16" r="4.7" fill="#F2F3F4"/>
+</svg>

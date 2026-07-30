@@ -156,3 +156,11 @@ If you would rather not depend on a host at all, two options that were considere
 
 - **LAN only**: run `START.bat`, allow Python through Windows Firewall, and share the Network URL the launcher prints. Free, private, and only reachable from your own Wi-Fi while your machine is awake.
 - **Cloudflare Tunnel** from an always-on home PC: `cloudflared tunnel --url http://localhost:8100` gives an HTTPS URL without opening router ports, and a named tunnel gives a stable hostname. Data stays on your machine in SQLite.
+
+## AI resume tailoring and LaTeX compile
+
+The AI tailoring feature is bring-your-own-key: each user pastes their own free Gemini or Groq key in AI settings. The server never holds its own key, and every user key is encrypted at rest (Fernet, derived from `JOBSQUAD_SECRET`). Set `JOBSQUAD_SECRET` to a stable value in production or stored keys become undecryptable after a restart.
+
+Server-side LaTeX-to-PDF compile is intentionally OFF in the deployed image. When Tectonic is not present the compile endpoint returns 501 and the app offers a `.tex` download to compile on Overleaf, which is the recommended flow. Reason: on an ephemeral-disk host (like Render free) Tectonic re-downloads its TeX package cache on every restart, and running untrusted LaTeX server-side is a security surface.
+
+If you do enable server-side compile (install Tectonic and set `TECTONIC_PATH`), only do so behind an OS sandbox (a locked-down container with a read-only filesystem and no access to `data/.secret` or the database). The app already runs Tectonic with `--untrusted` (blocks shell-escape) plus a denylist that rejects file-input LaTeX commands (`\input`, `\openin`, `\read`, `\write`, `\catcode`, ...), but that is defense-in-depth, not a substitute for a sandbox.

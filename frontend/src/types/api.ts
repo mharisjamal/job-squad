@@ -329,3 +329,60 @@ export interface MatchReport {
    */
   resume_text_available?: boolean;
 }
+
+// BYOK AI settings, tailoring, and share links (plan section 9b, Phase R3)
+
+export type AiProvider = "gemini" | "groq" | "custom";
+
+/**
+ * GET /api/settings/ai. The key is never returned; key_set says one is stored.
+ * On a fresh account nothing is configured yet, so provider/base_url/model come
+ * back null; the settings panel coalesces those to the recommended defaults.
+ */
+export interface AiSettings {
+  provider: AiProvider | null;
+  base_url: string | null;
+  model: string | null;
+  key_set: boolean;
+}
+
+/** PUT /api/settings/ai. A blank or omitted key keeps the stored one. */
+export interface AiSettingsPut {
+  provider: AiProvider;
+  base_url?: string;
+  model?: string;
+  key?: string;
+}
+
+/** POST /api/settings/ai/test. error carries the provider text when ok is false. */
+export interface AiTestResult {
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface TailorSuggestion {
+  section: string;
+  original: string;
+  suggested: string;
+  reason: string;
+}
+
+/** Tailoring a .tex resume returns an editable source plus a change summary. */
+export interface TailorTexResult {
+  kind: "tex";
+  tailored_tex: string;
+  changes: string[];
+}
+
+/** Tailoring a pdf/docx resume returns non-destructive suggestions only. */
+export interface TailorAdviceResult {
+  kind: "advice";
+  suggestions: TailorSuggestion[];
+  keywords_to_add: string[];
+}
+
+export type TailorResult = TailorTexResult | TailorAdviceResult;
+
+export interface ShareLink {
+  url: string;
+}

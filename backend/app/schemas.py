@@ -192,6 +192,40 @@ class ResumePatchIn(BaseModel):
         return value
 
 
+AIProvider = Literal["gemini", "groq", "custom"]
+
+# The tailored LaTeX the model returns is bounded so a runaway reply cannot be
+# stored unbounded; comfortably larger than any real single-page resume source.
+TEX_SOURCE_MAX = 200_000
+
+
+class AISettingsPutIn(BaseModel):
+    """Save a user's BYOK AI settings. A blank/omitted key keeps the stored one;
+    switching to a preset provider fills base_url/model when they are omitted."""
+
+    provider: AIProvider
+    base_url: str | None = Field(default=None, max_length=URL_MAX)
+    model: str | None = Field(default=None, max_length=200)
+    key: str | None = Field(default=None, max_length=500)
+
+
+class TailorIn(BaseModel):
+    resume_id: int
+
+
+class TexCompileIn(BaseModel):
+    tex_source: str = Field(min_length=1, max_length=TEX_SOURCE_MAX)
+    label: str = Field(max_length=RESUME_LABEL_MAX)
+
+    @field_validator("label")
+    @classmethod
+    def _label_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("label must not be blank")
+        return value
+
+
 class PortalCreateIn(BaseModel):
     name: str = Field(max_length=NAME_MAX)
     url: str | None = Field(default=None, max_length=URL_MAX)

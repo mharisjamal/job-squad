@@ -16,6 +16,7 @@ import {
   StickyNote,
   Trash2,
   Users,
+  Wand2,
 } from "lucide-react";
 import { useGroupCtx } from "../components/layout/Shell";
 import { useAuth } from "../hooks/useAuth";
@@ -30,7 +31,11 @@ import {
 } from "../hooks/useCompanies";
 import { usePortals } from "../hooks/usePortals";
 import { openResumeFile, useResumes } from "../hooks/useResumes";
+import { useAiSettings } from "../hooks/useAiSettings";
+import { useTailor } from "../hooks/useTailor";
 import { MatchPanel } from "../components/MatchPanel";
+import { TailorPanel } from "../components/TailorPanel";
+import { ApplyKitButton } from "../components/ApplyKitButton";
 import { useToast } from "../components/ui/Toast";
 import { CompanyFormDialog } from "../components/CompanyFormDialog";
 import { ConfirmDialog } from "../components/ui/Dialog";
@@ -143,10 +148,16 @@ function MyApplicationEditor({
   gid,
   cid,
   mine,
+  aiConfigured,
+  tailorPending,
+  onRunTailor,
 }: {
   gid: number;
   cid: number;
   mine: ApplicationFull | null;
+  aiConfigured: boolean;
+  tailorPending: boolean;
+  onRunTailor: () => void;
 }) {
   const upsert = useUpsertApplication(gid);
   const removeApp = useRemoveApplication(gid);
@@ -164,6 +175,22 @@ function MyApplicationEditor({
   const [jdText, setJdText] = useState("");
   const [jdOpen, setJdOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+
+  // Tailoring and the apply kit act on the SAVED application, so readiness is
+  // derived from `mine`, not the unsaved form. Save first, then tailor.
+  const tailorReady =
+    mine != null && mine.resume_id != null && (mine.jd_text?.trim().length ?? 0) > 0;
+
+  const handleTailor = () => {
+    setShowSetup(false);
+    if (!tailorReady) return;
+    if (!aiConfigured) {
+      setShowSetup(true);
+      return;
+    }
+    onRunTailor();
+  };
 
   // Sync the form whenever my server-side row changes identity or version.
   useEffect(() => {
@@ -383,6 +410,36 @@ function MyApplicationEditor({
             </div>
           )}
         </div>
+
+        {/* AI tailoring + apply kit (plan 9b, R3), acting on the saved row. */}
+        <div className="space-y-2.5 border-t border-line pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={handleTailor}
+              disabled={!tailorReady || tailorPending}
+            >
+              <Wand2 className="h-4 w-4" aria-hidden />
+              {tailorPending ? "Tailoring..." : "Tailor resume"}
+            </button>
+            {mine && <ApplyKitButton application={mine} gid={gid} />}
+          </div>
+          {!tailorReady && (
+            <p className="text-xs text-muted">
+              Attach a resume and paste a job description to tailor.
+            </p>
+          )}
+          {showSetup && (
+            <p className="rounded-md border border-line bg-canvas p-3 text-xs text-muted">
+              Set up AI first.{" "}
+              <Link to={`/g/${gid}/settings/ai`} className="link">
+                Open AI settings
+              </Link>
+            </p>
+          )}
+        </div>
+
         <div className="flex items-center justify-between gap-2">
           {mine ? (
             <button
@@ -440,6 +497,13 @@ export default function CompanyDetail() {
   const deleteCompany = useDeleteCompany(gid);
   const addComment = useAddComment(gid, cid);
   const deleteComment = useDeleteComment(gid, cid);
+  const aiSettings = useAiSettings();
+
+  // Derived (not hooks) so the tailor mutation can bind to my application id
+  // before the loading/error guards below.
+  const cData = company.data;
+  const mine = cData?.applications.find((a) => a.user_id === user?.id) ?? null;
+  const tailor = useTailor(mine?.id ?? null);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -463,8 +527,10 @@ export default function CompanyDetail() {
   }
 
   const c = company.data;
-  const mine = c.applications.find((a) => a.user_id === user?.id) ?? null;
   const canDelete = user != null && (c.created_by === user.id || group.owner_id === user.id);
+  const runTailor = () => {
+    if (mine?.resume_id != null) tailor.mutate(mine.resume_id);
+  };
 
   const saveNotes = () => {
     updateCompany.mutate(
@@ -612,11 +678,21 @@ export default function CompanyDetail() {
         </section>
 
         {/* My application */}
-        <MyApplicationEditor gid={gid} cid={cid} mine={mine} />
+        <MyApplicationEditor
+          gid={gid}
+          cid={cid}
+          mine={mine}
+          aiConfigured={aiSettings.data?.key_set === true}
+          tailorPending={tailor.isPending}
+          onRunTailor={runTailor}
+        />
       </div>
 
       {/* JD <-> resume match (only meaningful once I have an application row) */}
       {mine && <MatchPanel application={mine} />}
+
+      {/* AI tailoring result (renders only after a tailor run starts) */}
+      {mine && <TailorPanel tailor={tailor} application={mine} gid={gid} />}
 
       {/* Shared notes */}
       <section className="card p-5">

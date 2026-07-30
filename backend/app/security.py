@@ -147,3 +147,39 @@ def pkce_challenge(verifier: str) -> str:
     """S256 challenge for a verifier."""
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return _b64url_encode(digest)
+
+
+# ---------------------------------------------------------------------------
+# At-rest encryption for user BYOK AI keys (Fernet, key derived from the app
+# secret). The key is DERIVED, never stored, so it is stable across restarts
+# and rotates automatically if the app secret is rotated (old ciphertexts then
+# fail to decrypt and the user simply re-enters their key). Plaintext keys are
+# never persisted or logged.
+# ---------------------------------------------------------------------------
+
+_FERNET_KEY_INFO = b"jobsquad-ai-key-v1"
+
+
+def _derive_fernet_key(app_secret: str) -> bytes:
+    """A stable 32-byte urlsafe-base64 Fernet key from the app secret."""
+    digest = hashlib.sha256(_FERNET_KEY_INFO + b":" + app_secret.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+def encrypt_secret(plaintext: str, app_secret: str) -> str:
+    """Encrypt a secret (e.g. an AI API key) for storage at rest."""
+    from cryptography.fernet import Fernet
+
+    token = Fernet(_derive_fernet_key(app_secret)).encrypt(plaintext.encode("utf-8"))
+    return token.decode("ascii")
+
+
+def decrypt_secret(token: str, app_secret: str) -> str | None:
+    """Decrypt a stored secret; None when the ciphertext is invalid or the key
+    has since changed (rotated app secret). Never raises."""
+    from cryptography.fernet import Fernet, InvalidToken
+
+    try:
+        return Fernet(_derive_fernet_key(app_secret)).decrypt(token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError, TypeError):
+        return None

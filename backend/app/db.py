@@ -139,6 +139,9 @@ async def _migrate_postgres(conn) -> None:
     # Backfill for resumes uploaded before extraction existed happens lazily on
     # the first match request; no column change is needed for extracted_text /
     # source_tex (create_all added them with the resumes table).
+    # Phase R3 adds two brand-new tables (user_ai_settings, resume_shares) and
+    # NO new columns on existing tables, so create_all provisions them on both
+    # dialects and there is nothing to ALTER here. Listed for the reader.
 
 
 async def _migrate(engine: AsyncEngine) -> None:

@@ -13,6 +13,7 @@ import {
   Menu as MenuIcon,
   Moon,
   Repeat,
+  Sparkles,
   Sun,
   X,
 } from "lucide-react";
@@ -245,6 +246,15 @@ export function GroupShell() {
                         >
                           <Repeat className="h-4 w-4 text-muted" aria-hidden />
                           Switch group
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            close();
+                            navigate(`/g/${gid}/settings/ai`);
+                          }}
+                        >
+                          <Sparkles className="h-4 w-4 text-muted" aria-hidden />
+                          AI settings
                         </MenuItem>
                         <MenuItem
                           onClick={() => {

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import ai
 from ..activity import record
 from ..deps import (
     get_company_for_member,
@@ -20,9 +21,11 @@ from ..models import (
     Portal,
     Resume,
     User,
+    UserAISettings,
     utcnow,
 )
-from ..schemas import ApplicationPutIn, serialize_application_full
+from ..schemas import ApplicationPutIn, TailorIn, serialize_application_full
+from ..security import decrypt_secret
 from ..skills import find_skills
 
 router = APIRouter(tags=["applications"])
@@ -246,3 +249,124 @@ async def match_application(
         "resume_label": resume.label,
         "resume_text_available": resume_text_available,
     }
+
+
+async def _resume_source_for_tailor(session: AsyncSession, resume: Resume) -> str:
+    """The text handed to the model: full LaTeX for a .tex resume (or a compiled
+    PDF that retained its source), otherwise the extracted plain text."""
+    if resume.kind == "tex" or resume.source_tex:
+        if resume.source_tex:
+            return resume.source_tex
+        data = await session.scalar(select(Resume.data).where(Resume.id == resume.id))
+        return bytes(data or b"").decode("utf-8", errors="replace")
+    return await _ensure_extracted_text(session, resume)
+
+
+async def _tailor_via_ai(kind: str, resume_text: str, jd_text: str, **client_kwargs) -> dict:
+    """Call the AI once, parse JSON, retry once with a JSON-only nudge, else 502."""
+    messages = ai.build_tailor_messages(kind, resume_text, jd_text)
+    try:
+        reply = await ai.chat_completion(messages=messages, **client_kwargs)
+    except ai.AIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    parsed = ai.parse_tailor_json(reply)
+    if parsed is None:
+        retry_messages = ai.json_retry_messages(messages, reply)
+        try:
+            reply = await ai.chat_completion(messages=retry_messages, **client_kwargs)
+        except ai.AIError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        parsed = ai.parse_tailor_json(reply)
+    if parsed is None:
+        raise HTTPException(
+            status_code=502,
+            detail="The AI provider did not return usable JSON. Try again.",
+        )
+    return parsed
+
+
+@router.post("/applications/{app_id}/tailor")
+async def tailor_application(
+    app_id: int,
+    body: TailorIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """AI-tailor MY resume to this application's job description (BYOK).
+
+    Not-mine or cross-group is a 404. Missing prerequisites are 409s that say
+    exactly which one is missing (job description, resume, or AI settings). The
+    system prompt hard-constrains the model against inventing facts.
+    """
+    row = await session.get(Application, app_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+    await get_company_for_member(session, row.company_id, user)
+
+    resume = await session.get(Resume, body.resume_id)
+    if resume is None or resume.user_id != user.id:
+        raise HTTPException(status_code=409, detail="Choose one of your resumes to tailor.")
+    jd = (row.jd_text or "").strip()
+    if not jd:
+        raise HTTPException(
+            status_code=409, detail="Add a job description to this application first."
+        )
+    settings = await session.get(UserAISettings, user.id)
+    if settings is None or not settings.key_encrypted:
+        raise HTTPException(
+            status_code=409, detail="Configure your AI provider and key in Settings first."
+        )
+    api_key = decrypt_secret(settings.key_encrypted, request.app.state.settings.secret)
+    if not api_key:
+        raise HTTPException(
+            status_code=409, detail="Your stored AI key could not be read. Re-enter it in Settings."
+        )
+
+    resume_text = await _resume_source_for_tailor(session, resume)
+    if not resume_text.strip():
+        raise HTTPException(
+            status_code=409,
+            detail="This resume has no readable text to tailor. Upload a text-based file.",
+        )
+
+    client_kwargs = {
+        "base_url": settings.base_url or "",
+        "api_key": api_key,
+        "model": settings.model or "",
+    }
+    parsed = await _tailor_via_ai(resume.kind, resume_text, jd, **client_kwargs)
+
+    if resume.kind == "tex":
+        tailored = parsed.get("tailored_tex")
+        if not isinstance(tailored, str) or not tailored.strip():
+            raise HTTPException(
+                status_code=502, detail="The AI did not return tailored LaTeX. Try again."
+            )
+        changes = [str(c) for c in parsed.get("changes", []) if isinstance(c, str | int | float)]
+        return {"kind": "tex", "tailored_tex": tailored, "changes": changes}
+
+    suggestions = _clean_suggestions(parsed.get("suggestions"))
+    keywords = [
+        str(k) for k in (parsed.get("keywords_to_add") or []) if isinstance(k, str | int | float)
+    ]
+    return {"kind": "advice", "suggestions": suggestions, "keywords_to_add": keywords}
+
+
+def _clean_suggestions(raw) -> list[dict]:
+    """Keep only well-formed suggestion objects, coercing fields to strings."""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "section": str(item.get("section", "")),
+                "original": str(item.get("original", "")),
+                "suggested": str(item.get("suggested", "")),
+                "reason": str(item.get("reason", "")),
+            }
+        )
+    return out

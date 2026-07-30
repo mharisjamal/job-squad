@@ -7,22 +7,32 @@ owner-only. The ?access_token= query fallback is NOT honored here: in-app
 viewing fetches with the Bearer header into a blob URL.
 """
 
+import asyncio
+import secrets
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from ..deps import get_current_user, get_session
 from ..extraction import extract_text
-from ..models import Application, Company, GroupMember, Resume, User
-from ..schemas import RESUME_LABEL_MAX, ResumePatchIn, serialize_resume
+from ..latex import CompileError, compile_tex, find_tectonic
+from ..models import Application, Company, GroupMember, Resume, ResumeShare, User
+from ..schemas import RESUME_LABEL_MAX, ResumePatchIn, TexCompileIn, serialize_resume
 
 router = APIRouter(tags=["resumes"])
 
 MAX_RESUME_BYTES = 2 * 1024 * 1024  # 2 MB per file
 MAX_RESUMES_PER_USER = 10
 INTERVIEW_STATUSES = ("assessment", "interview")
+SHARE_TOKEN_BYTES = 16  # 32 hex chars
+
+# Bound simultaneous 60s LaTeX compiles so a burst of /resumes/compile calls
+# cannot exhaust Starlette's threadpool; extra callers wait their turn.
+MAX_CONCURRENT_COMPILES = 2
+_COMPILE_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_COMPILES)
 
 # Content type is derived from the detected kind, never trusted from the client.
 KIND_CONTENT_TYPES = {
@@ -221,6 +231,64 @@ async def resume_stats(
     return payload
 
 
+@router.post("/resumes/compile")
+async def compile_resume(
+    body: TexCompileIn,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Compile LaTeX to a PDF and store it as a NEW resume (source_tex retained).
+
+    Degrades gracefully: 501 when tectonic is unavailable on this host (the UI
+    then points the user at Overleaf), 422 with a trimmed error tail when the
+    LaTeX itself fails to compile. A compile failure never crashes the process.
+    """
+    tectonic = find_tectonic()
+    if tectonic is None:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "PDF compile is not available on this server. "
+                "Download the .tex and compile it on Overleaf."
+            ),
+        )
+    try:
+        async with _COMPILE_SEMAPHORE:
+            pdf_bytes = await run_in_threadpool(compile_tex, body.tex_source, tectonic)
+    except CompileError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail) from exc
+    if len(pdf_bytes) > MAX_RESUME_BYTES:
+        raise HTTPException(status_code=413, detail="Compiled PDF is larger than 2 MB")
+
+    resume = Resume(
+        user_id=user.id,
+        label=body.label,
+        filename=f"{body.label[:60].strip() or 'resume'}.pdf",
+        kind="pdf",
+        content_type=KIND_CONTENT_TYPES["pdf"],
+        size_bytes=len(pdf_bytes),
+        data=pdf_bytes,
+        extracted_text=extract_text("pdf", pdf_bytes),
+        # Keep the source so the PDF can be re-tailored/re-compiled later.
+        source_tex=body.tex_source,
+    )
+    session.add(resume)
+    await session.flush()
+    # Same post-insert cap check as upload: the newest row over the limit rolls
+    # back, so two concurrent creates cannot both slip past a stale count.
+    total = await session.scalar(
+        select(func.count()).select_from(Resume).where(Resume.user_id == user.id)
+    )
+    if int(total or 0) > MAX_RESUMES_PER_USER:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Resume limit reached ({MAX_RESUMES_PER_USER}). Delete one first.",
+        )
+    await session.commit()
+    return serialize_resume(resume, 0)
+
+
 @router.patch("/resumes/{resume_id}")
 async def rename_resume(
     resume_id: int,
@@ -270,3 +338,56 @@ async def resume_file(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+async def _active_share(session: AsyncSession, resume_id: int) -> ResumeShare | None:
+    return await session.scalar(
+        select(ResumeShare).where(
+            ResumeShare.resume_id == resume_id, ResumeShare.revoked.is_(False)
+        )
+    )
+
+
+@router.post("/resumes/{resume_id}/share")
+async def create_share(
+    resume_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create (or reuse) a public link for a PDF resume. Owner only; PDF only.
+
+    Reusing an existing active token keeps one stable URL per resume, so calling
+    this repeatedly (the apply-kit flow does) never mints a pile of links.
+    """
+    resume = await get_own_resume(session, resume_id, user)
+    if resume.kind != "pdf":
+        raise HTTPException(status_code=422, detail="Only PDF resumes can be shared.")
+    share = await _active_share(session, resume_id)
+    if share is None:
+        share = ResumeShare(resume_id=resume_id, token=secrets.token_hex(SHARE_TOKEN_BYTES))
+        session.add(share)
+        await session.commit()
+    public_url = request.app.state.settings.public_url.rstrip("/")
+    return {"url": f"{public_url}/r/{share.token}"}
+
+
+@router.delete("/resumes/{resume_id}/share")
+async def revoke_share(
+    resume_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Revoke any active share link for my resume (idempotent)."""
+    resume = await get_own_resume(session, resume_id, user)
+    shares = (
+        await session.scalars(
+            select(ResumeShare).where(
+                ResumeShare.resume_id == resume.id, ResumeShare.revoked.is_(False)
+            )
+        )
+    ).all()
+    for share in shares:
+        share.revoked = True
+    await session.commit()
+    return {"ok": True}

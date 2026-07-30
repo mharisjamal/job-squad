@@ -1,18 +1,20 @@
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Eye, FileText, Pencil, Trash2, Upload } from "lucide-react";
+import { Check, Copy, Eye, FileText, Link2, Pencil, Trash2, Upload } from "lucide-react";
 import {
   openResumeFile,
   useDeleteResume,
   useRenameResume,
   useResumes,
   useResumeStats,
+  useShareLink,
   useUploadResume,
 } from "../hooks/useResumes";
 import { useToast } from "../components/ui/Toast";
 import { ConfirmDialog } from "../components/ui/Dialog";
 import { EmptyState, ErrorState } from "../components/ui/EmptyState";
 import { Skeleton } from "../components/ui/Spinner";
+import { copyToClipboard } from "../lib/clipboard";
 import { formatBytes, timeAgo } from "../lib/format";
 import { ApiError } from "../lib/api";
 import type { Resume, ResumeStatsRow } from "../types/api";
@@ -130,11 +132,42 @@ function ResumeRow({ resume, stats }: { resume: Resume; stats: ResumeStatsRow | 
   const del = useDeleteResume();
   const { toast } = useToast();
 
+  const share = useShareLink(resume.id);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(resume.label);
   const cancelRef = useRef(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [viewing, setViewing] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const getLink = () =>
+    share.create.mutate(undefined, {
+      onSuccess: (link) => {
+        setShareUrl(link.url);
+        toast("Share link ready");
+      },
+      onError: (err) => toast(errMsg(err, "Couldn't create a share link. Retry."), "error"),
+    });
+
+  const copyLink = async () => {
+    if (!shareUrl) return;
+    const ok = await copyToClipboard(shareUrl);
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    }
+    toast(ok ? "Share link copied" : "Couldn't copy. Select it manually.", ok ? "success" : "error");
+  };
+
+  const revokeLink = () =>
+    share.revoke.mutate(undefined, {
+      onSuccess: () => {
+        setShareUrl(null);
+        toast("Share link revoked");
+      },
+      onError: (err) => toast(errMsg(err, "Couldn't revoke the link. Retry."), "error"),
+    });
 
   const commit = () => {
     setEditing(false);
@@ -220,6 +253,16 @@ function ResumeRow({ resume, stats }: { resume: Resume; stats: ResumeStatsRow | 
           <Eye className="h-3.5 w-3.5" aria-hidden />
           {viewing ? "Opening..." : "View"}
         </button>
+        {resume.kind === "pdf" && shareUrl == null && (
+          <button
+            className="btn-ghost h-8 px-2.5 text-xs"
+            onClick={getLink}
+            disabled={share.create.isPending}
+          >
+            <Link2 className="h-3.5 w-3.5" aria-hidden />
+            {share.create.isPending ? "Creating..." : "Get share link"}
+          </button>
+        )}
         <button
           className="btn-ghost h-8 px-2.5 text-xs text-danger"
           onClick={() => setConfirmDelete(true)}
@@ -228,6 +271,30 @@ function ResumeRow({ resume, stats }: { resume: Resume; stats: ResumeStatsRow | 
           Delete
         </button>
       </div>
+
+      {shareUrl != null && (
+        <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-line bg-canvas p-2.5">
+          <Link2 className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink" title={shareUrl}>
+            {shareUrl}
+          </span>
+          <button className="btn-ghost h-7 px-2 text-xs" onClick={copyLink}>
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-status-offer-text" aria-hidden />
+            ) : (
+              <Copy className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            className="btn-ghost h-7 px-2 text-xs text-danger"
+            onClick={revokeLink}
+            disabled={share.revoke.isPending}
+          >
+            {share.revoke.isPending ? "Revoking..." : "Revoke"}
+          </button>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmDelete}

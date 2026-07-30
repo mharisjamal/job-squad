@@ -166,6 +166,44 @@ class Resume(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class UserAISettings(Base):
+    """One user's BYOK AI provider configuration (Phase R3).
+
+    The API key is stored ENCRYPTED (Fernet, key derived from the app secret);
+    the plaintext never touches the database or the logs. base_url/model are the
+    OpenAI-compatible endpoint and model id. One row per user (user_id is the PK).
+    """
+
+    __tablename__ = "user_ai_settings"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(20))  # 'gemini' | 'groq' | 'custom'
+    base_url: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    key_encrypted: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ResumeShare(Base):
+    """A public share link for a PDF resume (Phase R3).
+
+    The token (32 hex chars from secrets) is the only credential; the public
+    GET /r/{token} route serves the PDF bytes and nothing else. Revoking flips
+    `revoked` rather than deleting, so a token can never be silently reused.
+    """
+
+    __tablename__ = "resume_shares"
+    __table_args__ = (Index("ix_resume_shares_resume_id", "resume_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resume_id: Mapped[int] = mapped_column(ForeignKey("resumes.id", ondelete="CASCADE"))
+    token: Mapped[str] = mapped_column(String(64), unique=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Application(Base):
     __tablename__ = "applications"
     __table_args__ = (

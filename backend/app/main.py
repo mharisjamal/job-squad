@@ -22,7 +22,11 @@ from .routers import (
     groups,
     portals,
     resumes,
+    shares,
     stats,
+)
+from .routers import (
+    settings as settings_router,
 )
 
 _ROUTERS = (
@@ -31,6 +35,7 @@ _ROUTERS = (
     companies.router,
     applications.router,
     resumes.router,
+    settings_router.router,
     portals.router,
     comments.router,
     activity.router,
@@ -109,6 +114,10 @@ def create_app() -> FastAPI:
 
     for router in _ROUTERS:
         app.include_router(router, prefix="/api")
+
+    # The one public, unauthenticated route lives at the app root (/r/{token}),
+    # not under /api. Registered before the SPA catch-all so it wins the match.
+    app.include_router(shares.router)
 
     @app.get("/health")
     async def health() -> dict:

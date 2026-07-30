@@ -19,6 +19,8 @@ dependencies = [
     # Resume text extraction for deterministic JD matching (Phase R2).
     "pypdf>=4.2",
     "python-docx>=1.1",
+    # At-rest encryption (Fernet) for each user's BYOK AI key (Phase R3).
+    "cryptography>=42.0",
 ]
 
 [dependency-groups]

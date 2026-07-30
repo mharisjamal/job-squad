@@ -6,6 +6,7 @@ import {
   Briefcase,
   CalendarClock,
   ExternalLink,
+  FileText,
   Globe,
   MessageSquare,
   Pencil,
@@ -26,6 +27,7 @@ import {
   useUpsertApplication,
 } from "../hooks/useCompanies";
 import { usePortals } from "../hooks/usePortals";
+import { openResumeFile, useResumes } from "../hooks/useResumes";
 import { useToast } from "../components/ui/Toast";
 import { CompanyFormDialog } from "../components/CompanyFormDialog";
 import { ConfirmDialog } from "../components/ui/Dialog";
@@ -91,6 +93,44 @@ function PostingLink({ url }: { url: string }) {
   );
 }
 
+/**
+ * Quiet resume chip on a squad card. Clicking fetches the file with the
+ * Bearer header and opens it; the server only allows resumes attached to
+ * applications in a shared group.
+ */
+function ResumeChip({ resumeId, label }: { resumeId: number; label: string }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const view = async () => {
+    setBusy(true);
+    try {
+      await openResumeFile(resumeId);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        toast("You can only view resumes attached to shared applications.", "error");
+      } else {
+        toast(errMsg(err, "Couldn't open the resume. Retry."), "error");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={view}
+      disabled={busy}
+      className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-line px-2 py-0.5 font-mono text-[11px] text-muted transition-colors duration-150 ease-out hover:bg-hover hover:text-ink disabled:opacity-50"
+      aria-label={`View resume ${label}`}
+    >
+      <FileText className="h-3 w-3 shrink-0" aria-hidden />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
 function MyApplicationEditor({
   gid,
   cid,
@@ -103,12 +143,14 @@ function MyApplicationEditor({
   const upsert = useUpsertApplication(gid);
   const removeApp = useRemoveApplication(gid);
   const portals = usePortals(gid);
+  const resumes = useResumes();
   const { toast } = useToast();
 
   const [status, setStatus] = useState<ApplicationStatus>("saved");
   const [appliedAt, setAppliedAt] = useState("");
   const [followUpAt, setFollowUpAt] = useState("");
   const [portalId, setPortalId] = useState("");
+  const [resumeId, setResumeId] = useState("");
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -119,9 +161,19 @@ function MyApplicationEditor({
     setAppliedAt(mine?.applied_at ?? "");
     setFollowUpAt(mine?.follow_up_at ?? "");
     setPortalId(mine?.applied_via_portal_id != null ? String(mine.applied_via_portal_id) : "");
+    setResumeId(mine?.resume_id != null ? String(mine.resume_id) : "");
     setUrl(mine?.url ?? "");
     setNotes(mine?.notes ?? "");
   }, [mine?.id, mine?.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const viewMyResume = async () => {
+    if (!resumeId) return;
+    try {
+      await openResumeFile(Number(resumeId));
+    } catch (err) {
+      toast(errMsg(err, "Couldn't open the resume. Retry."), "error");
+    }
+  };
 
   const save = (e: FormEvent) => {
     e.preventDefault();
@@ -135,6 +187,7 @@ function MyApplicationEditor({
           follow_up_at: followUpAt || null,
           url: normalizeUrl(url) || null,
           notes: notes.trim() || null,
+          resume_id: resumeId ? Number(resumeId) : null,
         },
       },
       {
@@ -211,6 +264,35 @@ function MyApplicationEditor({
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label htmlFor="app-resume" className="label">
+            Resume used
+          </label>
+          <div className="flex items-center gap-2.5">
+            <select
+              id="app-resume"
+              className="input"
+              value={resumeId}
+              onChange={(e) => setResumeId(e.target.value)}
+            >
+              <option value="">None</option>
+              {(resumes.data ?? []).map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            {resumeId && (
+              <button
+                type="button"
+                onClick={viewMyResume}
+                className="link shrink-0 text-xs"
+              >
+                View
+              </button>
+            )}
+          </div>
         </div>
         <div>
           <label htmlFor="app-url" className="label">
@@ -453,6 +535,9 @@ export default function CompanyDetail() {
                     )}
                     {a.url && <PostingLink url={a.url} />}
                   </dl>
+                  {a.resume_id != null && a.resume_label != null && (
+                    <ResumeChip resumeId={a.resume_id} label={a.resume_label} />
+                  )}
                   {a.notes && (
                     <p className="mt-2 whitespace-pre-wrap rounded-md bg-paper p-2.5 text-xs leading-relaxed text-ink/90">
                       {a.notes}

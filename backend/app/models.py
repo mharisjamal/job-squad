@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -139,12 +140,39 @@ class Portal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class Resume(Base):
+    """One uploaded resume file (the bytes live in the row; files are <=2 MB).
+
+    extracted_text and source_tex stay NULL in Phase R1; later phases fill them
+    (text extraction for JD matching, retained LaTeX source for compiled PDFs).
+    """
+
+    __tablename__ = "resumes"
+    __table_args__ = (Index("ix_resumes_user_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    label: Mapped[str] = mapped_column(String(80))
+    filename: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(10))  # 'pdf' | 'tex' | 'docx'
+    content_type: Mapped[str | None] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column()
+    # Deferred so list/authz queries never drag megabytes of file bytes along;
+    # the file endpoint selects this column explicitly.
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    source_tex: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class Application(Base):
     __tablename__ = "applications"
     __table_args__ = (
         UniqueConstraint("company_id", "user_id", name="uq_applications_company_user"),
         Index("ix_applications_user_id", "user_id"),
         Index("ix_applications_company_id", "company_id"),
+        Index("ix_applications_resume_id", "resume_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -153,6 +181,9 @@ class Application(Base):
     status: Mapped[str] = mapped_column(String(20))
     applied_via_portal_id: Mapped[int | None] = mapped_column(
         ForeignKey("portals.id", ondelete="SET NULL")
+    )
+    resume_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resumes.id", ondelete="SET NULL")
     )
     applied_at: Mapped[date | None] = mapped_column(Date)
     follow_up_at: Mapped[date | None] = mapped_column(Date)

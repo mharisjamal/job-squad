@@ -5,6 +5,7 @@ import {
   Building2,
   ChevronDown,
   Download,
+  FileText,
   Globe,
   Kanban,
   LayoutDashboard,
@@ -46,6 +47,7 @@ const NAV = [
   { to: "companies", label: "Companies", icon: Building2, end: false },
   { to: "board", label: "Board", icon: Kanban, end: false },
   { to: "portals", label: "Portals", icon: Globe, end: false },
+  { to: "resumes", label: "Resumes", icon: FileText, end: false },
   { to: "activity", label: "Activity", icon: ActivityIcon, end: false },
 ];
 

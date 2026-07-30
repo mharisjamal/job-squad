@@ -232,6 +232,94 @@ async def test_init_db_branches_on_dialect(
     assert bool(migrated) is expect_migration
 
 
+async def test_sqlite_migration_adds_resume_id_without_losing_rows(tmp_path):
+    """A pre-existing database (real data, no resume_id column) survives the
+    Phase R1 migration: the column appears, every row is intact, and the new
+    resumes table exists."""
+    engine = make_engine(tmp_path / "pre_resume.db")
+    async with engine.begin() as conn:
+        # The applications table exactly as it existed before Phase R1.
+        await conn.execute(
+            text(
+                "CREATE TABLE applications ("
+                " id INTEGER NOT NULL PRIMARY KEY,"
+                " company_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " status VARCHAR(20) NOT NULL,"
+                " applied_via_portal_id INTEGER,"
+                " applied_at DATE,"
+                " follow_up_at DATE,"
+                " url TEXT,"
+                " notes TEXT,"
+                " created_at DATETIME,"
+                " updated_at DATETIME,"
+                " UNIQUE (company_id, user_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO applications (id, company_id, user_id, status, notes)"
+                " VALUES (1, 1, 1, 'applied', 'CV v3'), (2, 1, 2, 'offer', NULL)"
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        info = (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        assert "resume_id" in {row[1] for row in info}
+        rows = (
+            await conn.execute(
+                text("SELECT id, status, notes, resume_id FROM applications ORDER BY id")
+            )
+        ).all()
+        assert rows == [(1, "applied", "CV v3", None), (2, "offer", None, None)]
+        indexes = {
+            row[1] for row in (await conn.execute(text("PRAGMA index_list(applications)"))).all()
+        }
+        assert "ix_applications_resume_id" in indexes
+        resume_columns = {
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(resumes)"))).all()
+        }
+        assert {"id", "user_id", "label", "kind", "data",
+                "extracted_text", "source_tex"} <= resume_columns
+    await engine.dispose()
+
+
+async def test_sqlite_resume_migration_is_idempotent(tmp_path):
+    """Running init_db twice (every boot does) must not fail or duplicate."""
+    engine = make_engine(tmp_path / "twice.db")
+    await init_db(engine)
+    await init_db(engine)
+    async with engine.begin() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        ]
+        assert columns.count("resume_id") == 1
+    await engine.dispose()
+
+
+async def test_postgres_migration_statements(monkeypatch):
+    """No live Postgres in tests: assert the postgresql branch emits the
+    idempotent ALTER/CREATE INDEX statements (and the sqlite branch does not)."""
+
+    async def _no_sqlite_migrate(_engine):
+        pass
+
+    monkeypatch.setattr("app.db._migrate", _no_sqlite_migrate)
+
+    pg = _FakeEngine("postgresql")
+    await init_db(pg)
+    joined = "\n".join(pg.log)
+    assert "ALTER TABLE applications ADD COLUMN IF NOT EXISTS resume_id BIGINT" in joined
+    assert "REFERENCES resumes(id) ON DELETE SET NULL" in joined
+    assert "CREATE INDEX IF NOT EXISTS ix_applications_resume_id" in joined
+
+    lite = _FakeEngine("sqlite")
+    await init_db(lite)
+    assert "IF NOT EXISTS resume_id" not in "\n".join(lite.log)
+
+
 async def test_tags_and_detail_round_trip_as_python_types(tmp_path):
     """The JSON/JSONB variant columns must behave identically on SQLite."""
     engine = make_engine(tmp_path / "json.db")

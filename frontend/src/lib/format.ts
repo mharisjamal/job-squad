@@ -88,6 +88,16 @@ export function daysUntil(iso: string | null | undefined): number | null {
   return Math.round((startOfDay(d) - startOfDay(now)) / 86400000);
 }
 
+/** File size for display: "312 KB", "1.4 MB". Resumes cap at 2 MB, so no GB. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)} KB`;
+  const mb = kb / 1024;
+  return `${mb >= 10 ? Math.round(mb) : Math.round(mb * 10) / 10} MB`;
+}
+
 /** Initials for the avatar circle. */
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);

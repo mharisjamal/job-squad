@@ -9,6 +9,7 @@ import Companies from "./pages/Companies";
 import CompanyDetail from "./pages/CompanyDetail";
 import Board from "./pages/Board";
 import Portals from "./pages/Portals";
+import Resumes from "./pages/Resumes";
 import Activity from "./pages/Activity";
 import { GroupShell } from "./components/layout/Shell";
 
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="companies/:cid" element={<CompanyDetail />} />
         <Route path="board" element={<Board />} />
         <Route path="portals" element={<Portals />} />
+        <Route path="resumes" element={<Resumes />} />
         <Route path="activity" element={<Activity />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -21,6 +21,7 @@ from .routers import (
     export,
     groups,
     portals,
+    resumes,
     stats,
 )
 
@@ -29,6 +30,7 @@ _ROUTERS = (
     groups.router,
     companies.router,
     applications.router,
+    resumes.router,
     portals.router,
     comments.router,
     activity.router,
@@ -37,6 +39,15 @@ _ROUTERS = (
 )
 
 MAX_REQUEST_BODY_BYTES = 1_000_000
+# The resume upload carries a file (2 MB cap enforced in the route) plus
+# multipart framing, so that one route gets its own larger ceiling.
+MAX_UPLOAD_BODY_BYTES = 3_000_000
+
+
+def request_body_limit(method: str, path: str) -> int:
+    if method == "POST" and path.rstrip("/") == "/api/resumes":
+        return MAX_UPLOAD_BODY_BYTES
+    return MAX_REQUEST_BODY_BYTES
 
 _ACCESS_TOKEN_RE = re.compile(r"(access_token=)[^\s&\"']+")
 
@@ -89,7 +100,8 @@ def create_app() -> FastAPI:
     async def limit_body_size(request: Request, call_next):
         content_length = request.headers.get("content-length")
         if content_length and content_length.isdigit():
-            if int(content_length) > MAX_REQUEST_BODY_BYTES:
+            limit = request_body_limit(request.method, request.url.path)
+            if int(content_length) > limit:
                 return JSONResponse(
                     {"detail": "Request body too large"}, status_code=413
                 )

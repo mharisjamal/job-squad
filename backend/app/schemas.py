@@ -21,6 +21,7 @@ from .models import (
     GroupMember,
     Portal,
     PortalStatus,
+    Resume,
     User,
 )
 
@@ -165,10 +166,26 @@ class CompanyPatchIn(BaseModel):
 class ApplicationPutIn(BaseModel):
     status: ApplicationStatus
     applied_via_portal_id: int | None = None
+    resume_id: int | None = None
     applied_at: date | None = None
     follow_up_at: date | None = None
     url: str | None = Field(default=None, max_length=URL_MAX)
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
+
+
+RESUME_LABEL_MAX = 80
+
+
+class ResumePatchIn(BaseModel):
+    label: str = Field(max_length=RESUME_LABEL_MAX)
+
+    @field_validator("label")
+    @classmethod
+    def _label_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("label must not be blank")
+        return value
 
 
 class PortalCreateIn(BaseModel):
@@ -257,19 +274,27 @@ def serialize_group_member(member: GroupMember, user: User) -> dict:
     }
 
 
-def serialize_application_brief(row: Application, user: User) -> dict:
+def serialize_application_brief(
+    row: Application, user: User, resume_label: str | None = None
+) -> dict:
     return {
         "user_id": user.id,
         "username": user.username,
         "display_name": user.display_name,
         "status": row.status,
         "applied_at": iso_date(row.applied_at),
+        "resume_id": row.resume_id,
+        "resume_label": resume_label,
         "updated_at": iso_z(row.updated_at),
     }
 
 
 def serialize_application_full(
-    row: Application, user: User, company_name: str, portal_name: str | None
+    row: Application,
+    user: User,
+    company_name: str,
+    portal_name: str | None,
+    resume_label: str | None = None,
 ) -> dict:
     return {
         "id": row.id,
@@ -281,12 +306,26 @@ def serialize_application_full(
         "status": row.status,
         "applied_via_portal_id": row.applied_via_portal_id,
         "applied_via_portal_name": portal_name,
+        "resume_id": row.resume_id,
+        "resume_label": resume_label,
         "applied_at": iso_date(row.applied_at),
         "follow_up_at": iso_date(row.follow_up_at),
         "url": row.url,
         "notes": row.notes,
         "created_at": iso_z(row.created_at),
         "updated_at": iso_z(row.updated_at),
+    }
+
+
+def serialize_resume(resume: Resume, attached_count: int) -> dict:
+    return {
+        "id": resume.id,
+        "label": resume.label,
+        "filename": resume.filename,
+        "kind": resume.kind,
+        "size_bytes": resume.size_bytes,
+        "created_at": iso_z(resume.created_at),
+        "attached_count": attached_count,
     }
 
 

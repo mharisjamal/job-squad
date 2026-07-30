@@ -332,6 +332,51 @@ Member avatars: `hsl(hash(username) % 360, 40%, 52%)` in dark and `hsl(..., 45%,
 10. Negative: a third user `mallory` registers, cannot access the group's companies by direct URL/id (404s), sees no data.
 11. Refresh on a deep route (`/g/1/board`) serves the SPA (no 404). Logout works; deep link returns after login.
 
+## 9b. Resume feature (added 2026-07-30; built in three gated phases)
+
+Delivery process for this feature: implementation agents -> adversarial verifier agent per phase -> orchestrator browser test -> **user tests locally -> only then push** (pushing main auto-deploys the live site). Local commits allowed at each phase boundary; no push without the user's explicit green signal.
+
+Product decisions: PDF is the default upload format (general users); `.tex` is first-class for tailoring (developers); DOCX accepted for storage/analysis. AI tailoring NEVER invents facts (rephrase/reorder only, contact details untouched). No auto-submit to ATS portals ever; the "apply kit" replaces it. AI is strictly BYOK (each user's own free key); provider abstraction is OpenAI-compatible (Gemini default, Groq preset, custom base URL).
+
+### Phase R1 - Resume vault + attachment + outcome stats (no AI, no new services)
+
+Data:
+- **resumes**: id PK, user_id FK users CASCADE, label TEXT NOT NULL (<=80), filename TEXT, kind TEXT ('pdf'|'tex'|'docx'), content_type TEXT, size_bytes INT, data (LargeBinary), extracted_text TEXT NULL, source_tex TEXT NULL (R3), created_at, updated_at. Guards: max 2 MB/file, max 10 resumes/user.
+- **applications.resume_id** BIGINT NULL FK resumes ON DELETE SET NULL.
+- Migration MUST be idempotent on EXISTING databases, both dialects: SQLite (existing PRAGMA-based block) AND Postgres (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; new tables come from create_all). The live Neon DB must survive this deploy.
+
+API (`routers/resumes.py`):
+- `POST /api/resumes` multipart {label, file} -> Resume `{id, label, filename, kind, size_bytes, created_at, attached_count}`. Kind by magic bytes (%PDF, PK zip for docx) + extension for .tex; 413/422 on size/type/count violations.
+- `GET /api/resumes` -> mine, with attached_count.
+- `PATCH /api/resumes/{id}` {label} · `DELETE /api/resumes/{id}` (FK sets applications.resume_id NULL; UI warns when attached).
+- `GET /api/resumes/{id}/file` -> bytes, `Content-Disposition: inline`, correct content type, `X-Content-Type-Options: nosniff`. AuthZ: owner, OR a user who shares a group in which this resume is attached to an application (squad visibility mirrors the notes philosophy; unattached resumes are private). In-app viewing uses fetch-with-Bearer + blob URL (the `?access_token=` allowlist does NOT widen).
+- `GET /api/resumes/stats` -> per my resume: {resume_id, label, applications, interviews (assessment+interview), offers, rejected, ghosted}.
+- Application PUT accepts `resume_id` (merge semantics; must be my resume -> 422 otherwise). ApplicationFull/Brief gain `resume_id, resume_label`.
+
+Frontend: sidebar item "Resumes" (route `/g/:gid/resumes`, user-scoped data): upload (picker + label), list rows (label, kind badge in mono, size, date, attached-to count, outcome mini-stats), inline rename, delete with confirm, view (blob, new tab). "My application" editor gains a "Resume used" select + view link. Squad status cards show the attached resume as a small chip (viewable when permitted).
+
+### Phase R2 - JD capture + deterministic match report (no LLM)
+
+- Deps: `pypdf`, `python-docx`. Extraction at upload (pdf/docx/tex-stripped); lazy backfill for pre-existing rows on first match request.
+- **applications.jd_text** TEXT NULL (<=50,000 chars), settable via the application PUT (merge).
+- `backend/app/skills.py`: curated canonical->aliases dictionary (~250 entries: languages, frameworks, infra, data, soft skills; aliases like k8s/kubernetes, js/javascript, gcp/google cloud).
+- `GET /api/applications/{id}/match` (my application only) -> `{jd_skills: [{skill, present}], coverage, missing, resume_id, resume_label}`; 409 when jd_text or attached resume missing (message says which).
+- Frontend: collapsible "Job description" textarea in My application editor; Match panel: coverage bar + present chips (offer green) / missing chips (interview amber), copy-missing button, honest empty states.
+
+### Phase R3 - BYOK AI tailoring + LaTeX compile + share links + apply kit
+
+- Deps: `cryptography` (Fernet, key derived from app secret) for at-rest encryption of user AI keys. Tectonic engine: installed in the Docker image with a warmed cache (compile a sample doc at build); local dev uses `TECTONIC_PATH` or PATH discovery; compile endpoint returns 501 with a clear message when absent.
+- **user_ai_settings**: user_id PK FK CASCADE, provider ('gemini'|'groq'|'custom'), base_url TEXT, model TEXT, key_encrypted TEXT, updated_at. Presets: gemini -> `https://generativelanguage.googleapis.com/v1beta/openai/` model `gemini-2.5-flash`; groq -> `https://api.groq.com/openai/v1` model `llama-3.3-70b-versatile`; model always user-editable. One OpenAI-compatible chat client (httpx, 60s timeout).
+- **resume_shares**: id PK, resume_id FK CASCADE, token TEXT UNIQUE (32 hex, `secrets`), created_at, revoked BOOL. `POST /api/resumes/{id}/share` -> {url: `{public_url}/r/{token}`} (owner only, pdf kind only); `DELETE /api/resumes/{id}/share`; public `GET /r/{token}` serves the PDF inline, 404 when revoked/unknown.
+- Settings API: `GET/PUT /api/settings/ai` (key masked on read, blank keeps), `POST /api/settings/ai/test` (minimal chat call, returns ok/error text).
+- `POST /api/applications/{id}/tailor` {resume_id} -> tex kind: `{kind:"tex", tailored_tex, changes:[summary strings]}`; pdf/docx: `{kind:"advice", suggestions:[{section, original, suggested, reason}], keywords_to_add}`. System prompt hard-constrains: no invented employers/titles/dates/skills, contact block untouched, edits limited to rephrasing/reordering/emphasis. 409 without jd/resume/settings (message says which).
+- `POST /api/resumes/compile` {tex_source, label} -> tectonic in a temp dir (subprocess list-args, no shell, 60s timeout, stderr captured) -> stores result as a NEW resume row (kind pdf, source_tex retained) -> Resume json.
+- Frontend: AI settings panel (provider dropdown, key, model, custom base URL, test button, privacy line: "Your resume and this job description are sent to the AI provider you configure. Free tiers may use data for training."); Tailor button on my application (needs resume + JD): tex -> before/after view + "Compile to PDF" -> new version auto-attached; pdf/docx -> suggestion cards with per-item copy. Apply kit button (needs posting URL + attached resume): opens posting, ensures+copies share link, bumps status to applied when still saved/none. Loading states for 10-30s calls; errors surfaced verbatim.
+
+### Verifier gates (each phase)
+
+A separate adversarial agent verifies before I browser-test: contract conformance against this section; authz on every new route (resume file access matrix, cross-group 404s, share-token scope); upload hardening (magic-byte checks, size caps, nosniff, filename handling); migration idempotence on EXISTING SQLite and Postgres databases with data; R3: subprocess injection surface, key encryption at rest, prompt-constraint presence, share-token entropy/revocation; test coverage of all the above; em-dash sweep. Findings fixed before the phase closes.
+
 ## 10. Non-goals (v1)
 
 Email/password reset, avatar uploads, push/mobile notifications, roles beyond owner/member, group deletion or member removal, multi-language, dark theme, SSR, offline. All fine later; nothing in v1 blocks them.

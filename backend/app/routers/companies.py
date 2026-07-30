@@ -18,6 +18,7 @@ from ..models import (
     Company,
     Group,
     Portal,
+    Resume,
     User,
 )
 from ..schemas import (
@@ -47,14 +48,17 @@ async def _company_extras(
         return briefs, counts
     app_rows = (
         await session.execute(
-            select(Application, User)
+            select(Application, User, Resume.label)
             .join(User, User.id == Application.user_id)
+            .outerjoin(Resume, Resume.id == Application.resume_id)
             .where(Application.company_id.in_(company_ids))
             .order_by(Application.updated_at.desc())
         )
     ).all()
-    for app_row, user in app_rows:
-        briefs[app_row.company_id].append(serialize_application_brief(app_row, user))
+    for app_row, user, resume_label in app_rows:
+        briefs[app_row.company_id].append(
+            serialize_application_brief(app_row, user, resume_label)
+        )
     count_rows = (
         await session.execute(
             select(Comment.company_id, func.count())
@@ -178,9 +182,10 @@ async def company_detail(
     creator = await session.get(User, company.created_by)
     app_rows = (
         await session.execute(
-            select(Application, User, Portal)
+            select(Application, User, Portal, Resume.label)
             .join(User, User.id == Application.user_id)
             .outerjoin(Portal, Portal.id == Application.applied_via_portal_id)
+            .outerjoin(Resume, Resume.id == Application.resume_id)
             .where(Application.company_id == cid)
             .order_by(Application.updated_at.desc())
         )
@@ -194,8 +199,8 @@ async def company_detail(
         )
     ).all()
     applications = [
-        serialize_application_full(a, u, company.name, p.name if p else None)
-        for a, u, p in app_rows
+        serialize_application_full(a, u, company.name, p.name if p else None, resume_label)
+        for a, u, p, resume_label in app_rows
     ]
     payload = serialize_company(
         company,

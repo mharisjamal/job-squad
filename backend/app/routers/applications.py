@@ -17,6 +17,7 @@ from ..models import (
     Application,
     Company,
     Portal,
+    Resume,
     User,
     utcnow,
 )
@@ -39,6 +40,12 @@ async def upsert_application(
         portal = await session.get(Portal, provided["applied_via_portal_id"])
         if portal is None or portal.group_id != company.group_id:
             raise HTTPException(status_code=422, detail="Unknown portal for this group")
+    if provided.get("resume_id") is not None:
+        resume_owner = await session.scalar(
+            select(Resume.user_id).where(Resume.id == provided["resume_id"])
+        )
+        if resume_owner != user.id:
+            raise HTTPException(status_code=422, detail="Unknown resume")
     saved_row: Application | None = None
     for _attempt in range(2):
         row = await session.scalar(
@@ -54,7 +61,8 @@ async def upsert_application(
         # An explicit null clears the column; an omitted field is left unchanged
         # on an existing row and defaults to null on create.
         for field in (
-            "status", "applied_via_portal_id", "applied_at", "follow_up_at", "url", "notes"
+            "status", "applied_via_portal_id", "resume_id",
+            "applied_at", "follow_up_at", "url", "notes",
         ):
             if field in provided:
                 setattr(row, field, provided[field])
@@ -86,7 +94,12 @@ async def upsert_application(
         portal_name = await session.scalar(
             select(Portal.name).where(Portal.id == saved_row.applied_via_portal_id)
         )
-    return serialize_application_full(saved_row, user, company.name, portal_name)
+    resume_label = None
+    if saved_row.resume_id is not None:
+        resume_label = await session.scalar(
+            select(Resume.label).where(Resume.id == saved_row.resume_id)
+        )
+    return serialize_application_full(saved_row, user, company.name, portal_name, resume_label)
 
 
 @router.delete("/companies/{cid}/application")
@@ -126,11 +139,14 @@ async def list_applications(
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     await require_member(session, gid, user)
+    # Resume.label rides the same query (no per-row lookups); selecting the
+    # column, not the entity, keeps the file bytes out of the result set.
     query = (
-        select(Application, User, Company, Portal)
+        select(Application, User, Company, Portal, Resume.label)
         .join(Company, Company.id == Application.company_id)
         .join(User, User.id == Application.user_id)
         .outerjoin(Portal, Portal.id == Application.applied_via_portal_id)
+        .outerjoin(Resume, Resume.id == Application.resume_id)
         .where(Company.group_id == gid)
     )
     if user_id:
@@ -148,6 +164,6 @@ async def list_applications(
         query = query.where(Application.status == status)
     rows = (await session.execute(query.order_by(Application.updated_at.desc()))).all()
     return [
-        serialize_application_full(a, u, c.name, p.name if p else None)
-        for a, u, c, p in rows
+        serialize_application_full(a, u, c.name, p.name if p else None, resume_label)
+        for a, u, c, p, resume_label in rows
     ]

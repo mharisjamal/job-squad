@@ -97,15 +97,40 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db(engine: AsyncEngine) -> None:
-    is_sqlite = engine.dialect.name == "sqlite"
+    dialect = engine.dialect.name
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        if is_sqlite:
+        if dialect == "sqlite":
             await conn.execute(text("PRAGMA journal_mode=WAL"))
-    if is_sqlite:
-        # The hand-rolled migration below is SQLite-only. A Postgres
-        # deployment starts from an empty database, so create_all is enough.
+        if dialect == "postgresql":
+            await _migrate_postgres(conn)
+    if dialect == "sqlite":
+        # The hand-rolled PRAGMA-based migration is SQLite-only.
         await _migrate(engine)
+
+
+async def _migrate_postgres(conn) -> None:
+    """Idempotent column top-ups for the hosted Postgres database (Render + Neon).
+
+    create_all adds missing TABLES (resumes) but never adds COLUMNS to a table
+    that already exists, and this project deliberately has no Alembic. Both
+    statements are IF NOT EXISTS, so every boot may run them against the live
+    database with real data and change nothing after the first time. The FK
+    rides on the ALTER itself: when the column already exists the whole
+    statement is skipped, so the constraint can never be added twice.
+    """
+    await conn.execute(
+        text(
+            "ALTER TABLE applications ADD COLUMN IF NOT EXISTS resume_id BIGINT"
+            " REFERENCES resumes(id) ON DELETE SET NULL"
+        )
+    )
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_applications_resume_id"
+            " ON applications (resume_id)"
+        )
+    )
 
 
 async def _migrate(engine: AsyncEngine) -> None:
@@ -119,20 +144,38 @@ async def _migrate(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
         await conn.execution_options(isolation_level="AUTOCOMMIT")
         rows = (await conn.execute(text("PRAGMA table_info(users)"))).all()
-        if not rows:
-            return
-        columns = {row[1] for row in rows}
-        if "email" not in columns:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(320)"))
-        if "avatar_url" not in columns:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
-        # Column 3 of PRAGMA table_info is "notnull": an older schema still
-        # marks password_hash NOT NULL, which social accounts cannot satisfy.
-        if any(row[1] == "password_hash" and row[3] for row in rows):
-            await _rebuild_users_table(conn)
-        await conn.execute(
-            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
-        )
+        if rows:
+            columns = {row[1] for row in rows}
+            if "email" not in columns:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(320)"))
+            if "avatar_url" not in columns:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
+            # Column 3 of PRAGMA table_info is "notnull": an older schema still
+            # marks password_hash NOT NULL, which social accounts cannot satisfy.
+            if any(row[1] == "password_hash" and row[3] for row in rows):
+                await _rebuild_users_table(conn)
+            await conn.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)")
+            )
+        app_rows = (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        if app_rows:
+            app_columns = {row[1] for row in app_rows}
+            if "resume_id" not in app_columns:
+                # ADD COLUMN with a REFERENCES clause is legal in SQLite as
+                # long as the default is NULL (it is). Existing rows keep
+                # their data and get resume_id NULL.
+                await conn.execute(
+                    text(
+                        "ALTER TABLE applications ADD COLUMN resume_id BIGINT"
+                        " REFERENCES resumes(id) ON DELETE SET NULL"
+                    )
+                )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_applications_resume_id"
+                    " ON applications (resume_id)"
+                )
+            )
 
 
 async def _rebuild_users_table(conn) -> None:

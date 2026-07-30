@@ -62,6 +62,8 @@ export interface ApplicationBrief {
   status: ApplicationStatus;
   applied_at: string | null;
   updated_at: string;
+  resume_id: number | null;
+  resume_label: string | null;
 }
 
 export interface ApplicationFull {
@@ -80,6 +82,8 @@ export interface ApplicationFull {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  resume_id: number | null;
+  resume_label: string | null;
 }
 
 export interface Company {
@@ -257,6 +261,7 @@ export interface ApplicationUpsert {
   follow_up_at?: string | null;
   url?: string | null;
   notes?: string | null;
+  resume_id?: number | null;
 }
 
 export interface PortalPayload {
@@ -269,4 +274,28 @@ export interface PortalStatusUpsert {
   status: PortalMemberStatus;
   rating?: number | null;
   notes?: string | null;
+}
+
+// Resumes (plan section 9b, Phase R1)
+
+export type ResumeKind = "pdf" | "tex" | "docx";
+
+export interface Resume {
+  id: number;
+  label: string;
+  filename: string | null;
+  kind: ResumeKind;
+  size_bytes: number;
+  created_at: string;
+  attached_count: number;
+}
+
+export interface ResumeStatsRow {
+  resume_id: number;
+  label: string;
+  applications: number;
+  interviews: number;
+  offers: number;
+  rejected: number;
+  ghosted: number;
 }

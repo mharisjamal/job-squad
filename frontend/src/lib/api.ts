@@ -95,6 +95,48 @@ export function apiSend<T>(
   });
 }
 
+/**
+ * Multipart upload (FormData). Content-Type is left to the browser so the
+ * multipart boundary is set correctly; everything else mirrors request().
+ */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(path, { method: "POST", body: form, headers });
+
+  if (res.status === 401 && !isPublicAuthPath(path)) {
+    handleUnauthorized();
+    throw new ApiError(401, "Session expired. Please sign in again.");
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseError(res));
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * Fetch a protected file as a Blob with the Bearer header (files are never
+ * exposed via ?access_token= URLs). Throws ApiError on non-200 like apiGet.
+ */
+export async function authedBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(path, { headers });
+
+  if (res.status === 401 && !isPublicAuthPath(path)) {
+    handleUnauthorized();
+    throw new ApiError(401, "Session expired. Please sign in again.");
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, await parseError(res));
+  }
+  return res.blob();
+}
+
 /** Append the access token as a query param (EventSource / <a download> cannot send headers). */
 export function sseUrl(path: string): string {
   const token = getToken();

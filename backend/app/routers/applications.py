@@ -12,6 +12,7 @@ from ..deps import (
     get_session,
     require_member,
 )
+from ..extraction import extract_text
 from ..models import (
     APPLICATION_STATUSES,
     Application,
@@ -22,6 +23,7 @@ from ..models import (
     utcnow,
 )
 from ..schemas import ApplicationPutIn, serialize_application_full
+from ..skills import find_skills
 
 router = APIRouter(tags=["applications"])
 
@@ -62,7 +64,7 @@ async def upsert_application(
         # on an existing row and defaults to null on create.
         for field in (
             "status", "applied_via_portal_id", "resume_id",
-            "applied_at", "follow_up_at", "url", "notes",
+            "applied_at", "follow_up_at", "url", "notes", "jd_text",
         ):
             if field in provided:
                 setattr(row, field, provided[field])
@@ -167,3 +169,80 @@ async def list_applications(
         serialize_application_full(a, u, c.name, p.name if p else None, resume_label)
         for a, u, c, p, resume_label in rows
     ]
+
+
+async def _ensure_extracted_text(session: AsyncSession, resume: Resume) -> str:
+    """Return the resume's plain text, extracting and persisting it lazily.
+
+    extracted_text is NULL only on rows uploaded before extraction existed; an
+    empty string means extraction already ran and found nothing (a scanned or
+    image-only PDF), so it is never re-attempted.
+    """
+    if resume.extracted_text is not None:
+        return resume.extracted_text
+    data = await session.scalar(select(Resume.data).where(Resume.id == resume.id))
+    text = extract_text(resume.kind, bytes(data or b""))
+    resume.extracted_text = text
+    await session.commit()
+    return text
+
+
+@router.get("/applications/{app_id}/match")
+async def match_application(
+    app_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Deterministic JD-to-resume skills report for MY application.
+
+    Not-mine or cross-group is a 404 (no existence leak). The report is a raw,
+    honest present/missing signal: coverage is present/total, missing items are
+    opportunities to consider, and no "score" beyond that is invented. The
+    frontend frames the numbers; this endpoint only reports the facts.
+    """
+    row = await session.get(Application, app_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Application not found")
+    # Membership check keeps the scoping rule explicit (my row is always in a
+    # group I belong to, but this is defense in depth and 404s if it is not).
+    await get_company_for_member(session, row.company_id, user)
+
+    jd = (row.jd_text or "").strip()
+    resume = await session.get(Resume, row.resume_id) if row.resume_id else None
+    if not jd and resume is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Add a job description and attach a resume to see the match.",
+        )
+    if not jd:
+        raise HTTPException(
+            status_code=409, detail="Add a job description to see the match."
+        )
+    if resume is None:
+        raise HTTPException(
+            status_code=409, detail="Attach a resume to see the match."
+        )
+
+    resume_text = await _ensure_extracted_text(session, resume)
+    # An image-only/scanned PDF extracts to nothing. Flag it so the frontend
+    # shows a "could not read this resume's text" notice instead of a
+    # misleading 0% report where every JD skill looks like a gap.
+    resume_text_available = bool(resume_text.strip())
+    jd_skills_ordered = find_skills(jd)
+    resume_skill_set = set(find_skills(resume_text))
+    jd_skills = [
+        {"skill": skill, "present": skill in resume_skill_set}
+        for skill in jd_skills_ordered
+    ]
+    present_count = sum(1 for entry in jd_skills if entry["present"])
+    total = len(jd_skills)
+    coverage = round(100 * present_count / total) if total else 0
+    missing = [entry["skill"] for entry in jd_skills if not entry["present"]]
+    return {
+        "jd_skills": jd_skills,
+        "coverage": coverage,
+        "missing": missing,
+        "resume_id": resume.id,
+        "resume_label": resume.label,
+        "resume_text_available": resume_text_available,
+    }

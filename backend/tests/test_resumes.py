@@ -3,9 +3,23 @@ matrix, application attachment (merge semantics), and outcome stats."""
 
 import pytest
 
+from app.routers.resumes import detect_kind
+
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 DOCX_BYTES = b"PK\x03\x04" + b"\x00" * 64
 TEX_BYTES = b"\\documentclass{article}\\begin{document}Hi\\end{document}"
+
+
+def test_detect_kind_prefers_tex_extension_over_magic_bytes():
+    # A LaTeX file whose first line is a "%PDF" comment must be tex, not pdf.
+    tex_with_pdf_comment = b"%PDF is not a real PDF here\n\\documentclass{article}\n"
+    assert detect_kind(tex_with_pdf_comment, "resume.tex") == "tex"
+    # Extension is checked case-insensitively.
+    assert detect_kind(PDF_BYTES, "Resume.TEX") == "tex"
+    # Without a .tex name the magic bytes still decide.
+    assert detect_kind(PDF_BYTES, "resume.pdf") == "pdf"
+    assert detect_kind(DOCX_BYTES, "resume.docx") == "docx"
+    assert detect_kind(b"plain text", "notes.txt") is None
 
 
 @pytest.fixture
@@ -77,8 +91,14 @@ async def test_kind_detection_magic_bytes_and_tex_extension(register, upload):
     assert resp.status_code == 200
     assert resp.json()["kind"] == "tex"
 
-    # Magic bytes beat the extension.
+    # A .tex extension wins over magic bytes: a LaTeX file whose first line is
+    # a "%PDF..." comment must not be misdetected as a PDF.
     resp = await upload(account["headers"], filename="sneaky.tex", content=PDF_BYTES)
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "tex"
+
+    # A non-.tex file with PDF magic is still a PDF.
+    resp = await upload(account["headers"], filename="cv.pdf", content=PDF_BYTES)
     assert resp.status_code == 200
     assert resp.json()["kind"] == "pdf"
 

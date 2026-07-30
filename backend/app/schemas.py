@@ -34,6 +34,9 @@ PortalMemberStatus = Literal["none", "signed_up", "active", "abandoned"]
 NAME_MAX = 120
 URL_MAX = 2000
 NOTES_MAX = 10000
+# A pasted job description is far longer than a note; capped so the match
+# report and the DB column stay bounded (422 past this).
+JD_TEXT_MAX = 50000
 TAGS_MAX_ITEMS = 20
 TagStr = Annotated[str, StringConstraints(max_length=50)]
 
@@ -171,6 +174,7 @@ class ApplicationPutIn(BaseModel):
     follow_up_at: date | None = None
     url: str | None = Field(default=None, max_length=URL_MAX)
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
+    jd_text: str | None = Field(default=None, max_length=JD_TEXT_MAX)
 
 
 RESUME_LABEL_MAX = 80
@@ -312,6 +316,7 @@ def serialize_application_full(
         "follow_up_at": iso_date(row.follow_up_at),
         "url": row.url,
         "notes": row.notes,
+        "jd_text": row.jd_text,
         "created_at": iso_z(row.created_at),
         "updated_at": iso_z(row.updated_at),
     }

@@ -299,6 +299,62 @@ async def test_sqlite_resume_migration_is_idempotent(tmp_path):
     await engine.dispose()
 
 
+async def test_sqlite_migration_adds_jd_text_without_losing_rows(tmp_path):
+    """A Phase R1 database (has resume_id, no jd_text) survives the R2
+    migration: the jd_text column appears and every existing row is intact."""
+    engine = make_engine(tmp_path / "pre_jd.db")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE applications ("
+                " id INTEGER NOT NULL PRIMARY KEY,"
+                " company_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " status VARCHAR(20) NOT NULL,"
+                " applied_via_portal_id INTEGER,"
+                " resume_id BIGINT,"
+                " applied_at DATE,"
+                " follow_up_at DATE,"
+                " url TEXT,"
+                " notes TEXT,"
+                " created_at DATETIME,"
+                " updated_at DATETIME,"
+                " UNIQUE (company_id, user_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO applications (id, company_id, user_id, status, notes)"
+                " VALUES (1, 1, 1, 'applied', 'CV v3'), (2, 1, 2, 'offer', NULL)"
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        info = (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        assert "jd_text" in {row[1] for row in info}
+        rows = (
+            await conn.execute(
+                text("SELECT id, status, notes, jd_text FROM applications ORDER BY id")
+            )
+        ).all()
+        assert rows == [(1, "applied", "CV v3", None), (2, "offer", None, None)]
+    await engine.dispose()
+
+
+async def test_sqlite_jd_text_migration_is_idempotent(tmp_path):
+    engine = make_engine(tmp_path / "jd_twice.db")
+    await init_db(engine)
+    await init_db(engine)
+    async with engine.begin() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        ]
+        assert columns.count("jd_text") == 1
+    await engine.dispose()
+
+
 async def test_postgres_migration_statements(monkeypatch):
     """No live Postgres in tests: assert the postgresql branch emits the
     idempotent ALTER/CREATE INDEX statements (and the sqlite branch does not)."""
@@ -318,6 +374,25 @@ async def test_postgres_migration_statements(monkeypatch):
     lite = _FakeEngine("sqlite")
     await init_db(lite)
     assert "IF NOT EXISTS resume_id" not in "\n".join(lite.log)
+
+
+async def test_postgres_migration_emits_jd_text_statement(monkeypatch):
+    """The postgresql branch adds jd_text idempotently; sqlite does not use the
+    IF NOT EXISTS form (it goes through the PRAGMA-guarded block instead)."""
+
+    async def _no_sqlite_migrate(_engine):
+        pass
+
+    monkeypatch.setattr("app.db._migrate", _no_sqlite_migrate)
+
+    pg = _FakeEngine("postgresql")
+    await init_db(pg)
+    joined = "\n".join(pg.log)
+    assert "ALTER TABLE applications ADD COLUMN IF NOT EXISTS jd_text TEXT" in joined
+
+    lite = _FakeEngine("sqlite")
+    await init_db(lite)
+    assert "IF NOT EXISTS jd_text" not in "\n".join(lite.log)
 
 
 async def test_tags_and_detail_round_trip_as_python_types(tmp_path):

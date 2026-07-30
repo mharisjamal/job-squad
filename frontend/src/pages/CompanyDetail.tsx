@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   Briefcase,
   CalendarClock,
+  ChevronDown,
+  ClipboardList,
   ExternalLink,
   FileText,
   Globe,
@@ -28,6 +30,7 @@ import {
 } from "../hooks/useCompanies";
 import { usePortals } from "../hooks/usePortals";
 import { openResumeFile, useResumes } from "../hooks/useResumes";
+import { MatchPanel } from "../components/MatchPanel";
 import { useToast } from "../components/ui/Toast";
 import { CompanyFormDialog } from "../components/CompanyFormDialog";
 import { ConfirmDialog } from "../components/ui/Dialog";
@@ -43,6 +46,11 @@ import type { ApplicationFull, ApplicationStatus } from "../types/api";
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
+
+// Server cap for a pasted job posting (plan 9b, R2). We surface a count only
+// as the text approaches this, so the note stays quiet.
+const JD_MAX = 50000;
+const JD_NOTE_FROM = 45000;
 
 /** External-link chip; falls back to plain text when the URL is not http(s). */
 function LinkChip({ icon: Icon, label, url }: { icon: typeof Globe; label: string; url: string }) {
@@ -153,6 +161,8 @@ function MyApplicationEditor({
   const [resumeId, setResumeId] = useState("");
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [jdText, setJdText] = useState("");
+  const [jdOpen, setJdOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Sync the form whenever my server-side row changes identity or version.
@@ -164,6 +174,10 @@ function MyApplicationEditor({
     setResumeId(mine?.resume_id != null ? String(mine.resume_id) : "");
     setUrl(mine?.url ?? "");
     setNotes(mine?.notes ?? "");
+    const jd = mine?.jd_text ?? "";
+    setJdText(jd);
+    // Open the section by default when there is already a JD to see.
+    if (jd.trim().length > 0) setJdOpen(true);
   }, [mine?.id, mine?.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const viewMyResume = async () => {
@@ -188,6 +202,7 @@ function MyApplicationEditor({
           url: normalizeUrl(url) || null,
           notes: notes.trim() || null,
           resume_id: resumeId ? Number(resumeId) : null,
+          jd_text: jdText.trim() || null,
         },
       },
       {
@@ -320,6 +335,53 @@ function MyApplicationEditor({
             rows={4}
           />
           <p className="mt-1 text-[11px] text-muted/90">Notes are visible to your group.</p>
+        </div>
+        <div className="rounded-md border border-line">
+          <button
+            type="button"
+            onClick={() => setJdOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors duration-150 ease-out hover:bg-hover"
+            aria-expanded={jdOpen}
+            aria-controls="app-jd"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-ink">
+              <ClipboardList className="h-4 w-4 text-muted" aria-hidden />
+              Job description
+              {!jdOpen && jdText.trim().length > 0 && (
+                <span className="font-mono text-[11px] font-normal text-muted">saved</span>
+              )}
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-muted transition-transform duration-150 ease-out ${
+                jdOpen ? "rotate-180" : ""
+              }`}
+              aria-hidden
+            />
+          </button>
+          {jdOpen && (
+            <div className="border-t border-line p-3">
+              <textarea
+                id="app-jd"
+                className="input min-h-32 resize-y"
+                value={jdText}
+                onChange={(e) => setJdText(e.target.value)}
+                placeholder="Paste the job posting here to see how your resume matches"
+                rows={6}
+                maxLength={JD_MAX}
+                aria-label="Job description"
+              />
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <p className="text-[11px] text-muted/90">
+                  Used only to compare against your attached resume.
+                </p>
+                {jdText.length >= JD_NOTE_FROM && (
+                  <p className="shrink-0 font-mono text-[11px] text-muted/80">
+                    {jdText.length.toLocaleString()} / {JD_MAX.toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between gap-2">
           {mine ? (
@@ -552,6 +614,9 @@ export default function CompanyDetail() {
         {/* My application */}
         <MyApplicationEditor gid={gid} cid={cid} mine={mine} />
       </div>
+
+      {/* JD <-> resume match (only meaningful once I have an application row) */}
+      {mine && <MatchPanel application={mine} />}
 
       {/* Shared notes */}
       <section className="card p-5">

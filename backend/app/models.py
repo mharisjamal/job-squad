@@ -189,6 +189,8 @@ class Application(Base):
     follow_up_at: Mapped[date | None] = mapped_column(Date)
     url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Pasted job description for the deterministic skills match report (R2).
+    jd_text: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

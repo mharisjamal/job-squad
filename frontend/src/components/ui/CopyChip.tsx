@@ -2,25 +2,7 @@ import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "./Toast";
-
-/** Legacy copy path for insecure origins (LAN http) where navigator.clipboard is undefined. */
-function legacyCopy(text: string): boolean {
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.setAttribute("readonly", "");
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try {
-    ok = document.execCommand("copy");
-  } catch {
-    ok = false;
-  }
-  document.body.removeChild(ta);
-  return ok;
-}
+import { copyToClipboard } from "../../lib/clipboard";
 
 /** Invite-code chip: selectable mono text + a copy button with confirmation. */
 export function CopyChip({ value, className }: { value: string; className?: string }) {
@@ -28,13 +10,7 @@ export function CopyChip({ value, className }: { value: string; className?: stri
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    let ok = false;
-    try {
-      await navigator.clipboard.writeText(value);
-      ok = true;
-    } catch {
-      ok = legacyCopy(value);
-    }
+    const ok = await copyToClipboard(value);
     if (ok) {
       setCopied(true);
       toast("Invite code copied");

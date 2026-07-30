@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..deps import get_current_user, get_session
+from ..extraction import extract_text
 from ..models import Application, Company, GroupMember, Resume, User
 from ..schemas import RESUME_LABEL_MAX, ResumePatchIn, serialize_resume
 
@@ -32,14 +33,19 @@ KIND_CONTENT_TYPES = {
 
 
 def detect_kind(content: bytes, filename: str | None) -> str | None:
-    """Kind by magic bytes (%PDF, PK zip for docx); .tex by extension only,
-    because LaTeX source is plain text with no magic number."""
+    """Kind by extension for .tex, else by magic bytes (%PDF, PK zip for docx).
+
+    LaTeX source is plain text with no magic number, and its first line is often
+    a comment - which may legitimately begin with "%PDF". So a ".tex" filename
+    wins over the magic-byte check; otherwise a real .tex would be misread as a
+    PDF and served/extracted as the wrong type.
+    """
+    if (filename or "").lower().endswith(".tex"):
+        return "tex"
     if content.startswith(b"%PDF"):
         return "pdf"
     if content.startswith(b"PK\x03\x04"):
         return "docx"
-    if (filename or "").lower().endswith(".tex"):
-        return "tex"
     return None
 
 
@@ -147,6 +153,8 @@ async def upload_resume(
         content_type=KIND_CONTENT_TYPES[kind],
         size_bytes=len(content),
         data=content,
+        # Extract now for the JD match report; never raises (worst case "").
+        extracted_text=extract_text(kind, content),
     )
     session.add(resume)
     await session.flush()

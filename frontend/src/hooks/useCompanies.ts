@@ -45,6 +45,9 @@ function invalidateCompanyData(qc: ReturnType<typeof useQueryClient>, gid: numbe
   void qc.invalidateQueries({ queryKey: ["stats", gid] });
   void qc.invalidateQueries({ queryKey: ["portals", gid] });
   void qc.invalidateQueries({ queryKey: ["activity", gid] });
+  // A saved application can change jd_text or the attached resume, so the
+  // deterministic match report may be stale (plan 9b, R2).
+  void qc.invalidateQueries({ queryKey: ["match"] });
 }
 
 export function useAddCompany(gid: number) {

@@ -84,6 +84,12 @@ export interface ApplicationFull {
   updated_at: string;
   resume_id: number | null;
   resume_label: string | null;
+  /**
+   * Captured job posting (plan 9b, R2). Optional so the type is safe while the
+   * backend rolls the field into serialize_application_full; the editor and the
+   * match panel read it to hydrate and to decide readiness.
+   */
+  jd_text?: string | null;
 }
 
 export interface Company {
@@ -262,6 +268,8 @@ export interface ApplicationUpsert {
   url?: string | null;
   notes?: string | null;
   resume_id?: number | null;
+  /** Pasted job posting (<=50,000 chars); merge semantics, null clears. */
+  jd_text?: string | null;
 }
 
 export interface PortalPayload {
@@ -298,4 +306,26 @@ export interface ResumeStatsRow {
   offers: number;
   rejected: number;
   ghosted: number;
+}
+
+// Deterministic JD <-> resume match report (plan section 9b, Phase R2)
+
+export interface MatchSkill {
+  skill: string;
+  present: boolean;
+}
+
+export interface MatchReport {
+  jd_skills: MatchSkill[];
+  /** Percentage 0-100 (present / total). Guidance, not a target to max out. */
+  coverage: number;
+  missing: string[];
+  resume_id: number | null;
+  resume_label: string | null;
+  /**
+   * False when the attached resume is image-only/scanned, so no text could be
+   * extracted to compare. Optional so the type is safe before/after the backend
+   * field lands; treated as true when absent.
+   */
+  resume_text_available?: boolean;
 }

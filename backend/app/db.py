@@ -131,6 +131,14 @@ async def _migrate_postgres(conn) -> None:
             " ON applications (resume_id)"
         )
     )
+    # Phase R2: the pasted job description column. IF NOT EXISTS keeps this
+    # boot-safe against the live database once the column is already present.
+    await conn.execute(
+        text("ALTER TABLE applications ADD COLUMN IF NOT EXISTS jd_text TEXT")
+    )
+    # Backfill for resumes uploaded before extraction existed happens lazily on
+    # the first match request; no column change is needed for extracted_text /
+    # source_tex (create_all added them with the resumes table).
 
 
 async def _migrate(engine: AsyncEngine) -> None:
@@ -176,6 +184,10 @@ async def _migrate(engine: AsyncEngine) -> None:
                     " ON applications (resume_id)"
                 )
             )
+            # Phase R2: pasted job description column. Guarded by the same
+            # PRAGMA check so an existing populated DB keeps all its rows.
+            if "jd_text" not in app_columns:
+                await conn.execute(text("ALTER TABLE applications ADD COLUMN jd_text TEXT"))
 
 
 async def _rebuild_users_table(conn) -> None:

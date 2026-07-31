@@ -393,6 +393,33 @@ These turn R2 from a naive keyword-coverage meter into an honest "natural alignm
 
 A separate adversarial agent verifies before I browser-test: contract conformance against this section; authz on every new route (resume file access matrix, cross-group 404s, share-token scope); upload hardening (magic-byte checks, size caps, nosniff, filename handling); migration idempotence on EXISTING SQLite and Postgres databases with data; R3: subprocess injection surface, key encryption at rest, prompt-constraint presence, share-token entropy/revocation; test coverage of all the above; em-dash sweep. Findings fixed before the phase closes.
 
+## 9c. Group management (added 2026-07-31; Phase G1)
+
+Product decisions (frozen): **invite code = instant join always** (public or private - having the code means you were invited, no approval). **Public group = discoverable in a directory + request-to-join, owner approves/rejects.** **Private group = not discoverable, code-only** (never leaks: a non-member hitting a private group's endpoints gets 404, not 403). Default visibility = **private** (matches current behavior). Roles stay owner/member.
+
+Data:
+- **groups.visibility** TEXT NOT NULL DEFAULT 'private' ('private'|'public'); **groups.description** TEXT NULL (max 280 chars; shown in the discover directory). Idempotent dual-dialect migration mirroring resume_id/jd_text/region; safe against live Neon rows (existing groups default to private).
+- **group_join_requests**: id PK, group_id FK groups CASCADE, user_id FK users CASCADE, status TEXT ('pending'|'approved'|'rejected') default 'pending', created_at, decided_at NULL, decided_by NULL FK users; partial-unique so a user has at most one PENDING request per group (enforce in code: reject a second pending). Index(group_id, status).
+
+API (all group-scoped routes keep the 404-for-non-member / 404-for-private rule; owner-only actions 403 for a non-owner member):
+- `PATCH /api/groups/{gid}` (owner) extends to accept `visibility` and `description` alongside `name` (merge semantics). Switching to private does not drop existing members; pending requests on a now-private group are left but no longer reachable via discover.
+- `GET /api/groups/discover?q=&limit=&offset=` -> public groups the caller is NOT already a member of, with `{id, name, description, member_count, request_status}` where request_status is `none|pending` for the caller. `q` matches name/description. Never lists private groups.
+- `POST /api/groups/{gid}/request` -> create a pending join request for a PUBLIC group (404 if private/unknown; 409 if already a member or already pending; idempotent-friendly). Records activity `join_requested`.
+- `GET /api/groups/{gid}/requests` (owner) -> pending requests `[{id, user_id, username, display_name, created_at}]`.
+- `POST /api/groups/{gid}/requests/{req_id}/approve` (owner) -> adds the user as a member (role member), marks request approved, records `member_joined`; idempotent if already a member. `POST .../reject` (owner) -> marks rejected, no membership.
+- `DELETE /api/groups/{gid}/members/{user_id}` (owner) -> remove a member. Cannot remove the owner or yourself via this route (owner uses leave rules); deletes that user's applications + portal statuses in the group (same cleanup as leave); records activity. 
+- `POST /api/groups/{gid}/regenerate-invite` (owner) -> issues a fresh unique invite_code, returns the group. Old code stops working immediately.
+- `Group`/`GroupDetail` shapes gain `visibility`, `description`, and (owner only, else omitted/0) `pending_request_count`. `GroupDetail.members` already carries roles.
+
+Frontend:
+- Sidebar nav gains a **"Groups"** item -> the group hub at `/` (replaces relying on the user-menu "Switch group"). The hub has: **My groups** (cards with name, visibility chip, member count, invite-code copy), **Discover** (public directory with search + a Request-to-join button that flips to "Requested"), and the existing **Create** (now with a private/public segmented toggle + an optional description field) and **Join with code** actions.
+- Per-group **Members** view (route `/g/:gid/members`, linked from the sidebar or group header): everyone sees the roster (avatars, names, roles). The **owner** additionally sees: a visibility toggle + editable description, a **pending requests** list with Approve/Reject (and a count badge on the nav), **Remove** on each member, and a **Regenerate invite code** action with a confirm ("the old code stops working"). Non-owners see the roster read-only.
+- Honest microcopy, loading/empty/error states, tokens-only styling, no em-dash.
+
+Non-goals for G1 (parked): transfer ownership, co-owner/admin role, per-request messages, email notifications of requests. Owner-can't-leave-while-others-remain rule stays until transfer-ownership exists.
+
+Verifier focus for G1: private groups never appear in discover and 404 (not 403) for non-members on every route; only the owner can PATCH visibility/description, view/approve/reject requests, remove members, regenerate the code; request flow can't create duplicate pending rows or let a member re-request; remove-member cleans up that user's data like leave; regenerate-invite actually invalidates the old code; migration idempotent + non-destructive on populated SQLite AND Postgres (existing groups become private).
+
 ## 10. Non-goals (v1)
 
 Email/password reset, avatar uploads, push/mobile notifications, roles beyond owner/member, group deletion or member removal, multi-language, dark theme, SSR, offline. All fine later; nothing in v1 blocks them.

@@ -37,6 +37,8 @@ NOTES_MAX = 10000
 # A pasted job description is far longer than a note; capped so the match
 # report and the DB column stay bounded (422 past this).
 JD_TEXT_MAX = 50000
+# A portal's market label, e.g. "Middle East", "USA", "Global".
+REGION_MAX = 60
 TAGS_MAX_ITEMS = 20
 TagStr = Annotated[str, StringConstraints(max_length=50)]
 
@@ -95,6 +97,13 @@ def _normalize_email_value(value: str) -> str:
     if len(value) > 320 or not _EMAIL_RE.fullmatch(value):
         raise ValueError("enter a valid email address")
     return value
+
+
+def _clean_region(value: str | None) -> str | None:
+    """Trim a portal region; an empty/whitespace-only value becomes null."""
+    if value is None:
+        return None
+    return value.strip() or None
 
 
 class RegisterStartIn(RegisterIn):
@@ -230,6 +239,7 @@ class PortalCreateIn(BaseModel):
     name: str = Field(max_length=NAME_MAX)
     url: str | None = Field(default=None, max_length=URL_MAX)
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
+    region: str | None = Field(default=None, max_length=REGION_MAX)
 
     @field_validator("name")
     @classmethod
@@ -239,11 +249,22 @@ class PortalCreateIn(BaseModel):
             raise ValueError("name must not be blank")
         return value
 
+    @field_validator("region")
+    @classmethod
+    def _clean_region_value(cls, value: str | None) -> str | None:
+        return _clean_region(value)
+
 
 class PortalPatchIn(BaseModel):
     name: str | None = Field(default=None, max_length=NAME_MAX)
     url: str | None = Field(default=None, max_length=URL_MAX)
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
+    region: str | None = Field(default=None, max_length=REGION_MAX)
+
+    @field_validator("region")
+    @classmethod
+    def _clean_region_value(cls, value: str | None) -> str | None:
+        return _clean_region(value)
 
 
 class PortalStatusPutIn(BaseModel):
@@ -417,6 +438,7 @@ def serialize_portal(
         "name": portal.name,
         "url": portal.url,
         "notes": portal.notes,
+        "region": portal.region,
         "created_by": portal.created_by,
         "created_by_username": created_by_username,
         "created_at": iso_z(portal.created_at),

@@ -395,6 +395,77 @@ async def test_postgres_migration_emits_jd_text_statement(monkeypatch):
     assert "IF NOT EXISTS jd_text" not in "\n".join(lite.log)
 
 
+async def test_sqlite_migration_adds_region_without_losing_rows(tmp_path):
+    """A pre-region portals table (with real rows, as the live DB has) survives
+    the migration: the region column appears and every existing row is intact."""
+    engine = make_engine(tmp_path / "pre_region.db")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE portals ("
+                " id INTEGER NOT NULL PRIMARY KEY,"
+                " group_id INTEGER NOT NULL,"
+                " name TEXT NOT NULL,"
+                " url TEXT,"
+                " notes TEXT,"
+                " created_by INTEGER NOT NULL,"
+                " created_at DATETIME,"
+                " updated_at DATETIME)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO portals (id, group_id, name, url, notes, created_by)"
+                " VALUES (1, 1, 'LinkedIn', 'https://linkedin.com', 'good', 1),"
+                " (2, 1, 'Bayt', NULL, NULL, 2)"
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        info = (await conn.execute(text("PRAGMA table_info(portals)"))).all()
+        assert "region" in {row[1] for row in info}
+        rows = (
+            await conn.execute(
+                text("SELECT id, name, notes, region FROM portals ORDER BY id")
+            )
+        ).all()
+        assert rows == [(1, "LinkedIn", "good", None), (2, "Bayt", None, None)]
+    await engine.dispose()
+
+
+async def test_sqlite_region_migration_is_idempotent(tmp_path):
+    engine = make_engine(tmp_path / "region_twice.db")
+    await init_db(engine)
+    await init_db(engine)
+    async with engine.begin() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(portals)"))).all()
+        ]
+        assert columns.count("region") == 1
+    await engine.dispose()
+
+
+async def test_postgres_migration_emits_region_statement(monkeypatch):
+    """The postgresql branch adds region idempotently; sqlite does not use the
+    IF NOT EXISTS form (it goes through the PRAGMA-guarded block instead)."""
+
+    async def _no_sqlite_migrate(_engine):
+        pass
+
+    monkeypatch.setattr("app.db._migrate", _no_sqlite_migrate)
+
+    pg = _FakeEngine("postgresql")
+    await init_db(pg)
+    joined = "\n".join(pg.log)
+    assert "ALTER TABLE portals ADD COLUMN IF NOT EXISTS region TEXT" in joined
+
+    lite = _FakeEngine("sqlite")
+    await init_db(lite)
+    assert "IF NOT EXISTS region" not in "\n".join(lite.log)
+
+
 async def test_tags_and_detail_round_trip_as_python_types(tmp_path):
     """The JSON/JSONB variant columns must behave identically on SQLite."""
     engine = make_engine(tmp_path / "json.db")

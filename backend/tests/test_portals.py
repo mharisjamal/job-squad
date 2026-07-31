@@ -176,6 +176,124 @@ async def test_effectiveness_reflects_applications(
     assert stats["group"]["portals"] == 1
 
 
+async def test_region_create_returned_and_defaults_null(
+    client, register, make_group, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+
+    # Created with a region: it comes back on the response and in the list.
+    with_region = await make_portal(
+        account["headers"], group["id"], name="Bayt", region="Middle East"
+    )
+    assert with_region["region"] == "Middle East"
+
+    # Created without a region: the field is present and null.
+    without_region = await make_portal(account["headers"], group["id"], name="LinkedIn")
+    assert without_region["region"] is None
+
+    listed = (
+        await client.get(f"/api/groups/{group['id']}/portals", headers=account["headers"])
+    ).json()
+    by_name = {p["name"]: p for p in listed}
+    assert by_name["Bayt"]["region"] == "Middle East"
+    assert by_name["LinkedIn"]["region"] is None
+
+
+async def test_region_is_trimmed_and_blank_becomes_null(
+    client, register, make_group, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+
+    trimmed = await make_portal(
+        account["headers"], group["id"], name="Indeed", region="  USA  "
+    )
+    assert trimmed["region"] == "USA"
+
+    blank = await make_portal(
+        account["headers"], group["id"], name="Glassdoor", region="   "
+    )
+    assert blank["region"] is None
+
+
+async def test_region_over_60_chars_rejected(client, register, make_group):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+
+    resp = await client.post(
+        f"/api/groups/{group['id']}/portals",
+        json={"name": "LinkedIn", "region": "x" * 61},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 422
+
+    # A 61-char region is also rejected on the patch path.
+    portal = (
+        await client.post(
+            f"/api/groups/{group['id']}/portals",
+            json={"name": "LinkedIn"},
+            headers=account["headers"],
+        )
+    ).json()
+    resp = await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"region": "y" * 61},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 422
+
+
+async def test_region_patch_sets_clears_and_merge_preserves(
+    client, register, make_group, make_portal
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    portal = await make_portal(account["headers"], group["id"], name="LinkedIn")
+    assert portal["region"] is None
+
+    # PATCH sets the region (and trims it).
+    resp = await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"region": "  Global  "},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    assert resp.json()["region"] == "Global"
+
+    # Merge semantics: patching another field must not wipe the region.
+    resp = await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"name": "LinkedIn Jobs"},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["name"] == "LinkedIn Jobs"
+    assert row["region"] == "Global"
+
+    # An explicit null clears the region.
+    resp = await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"region": None},
+        headers=account["headers"],
+    )
+    assert resp.json()["region"] is None
+
+    # A patch to a fresh region, then an explicit empty string also clears it.
+    await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"region": "USA"},
+        headers=account["headers"],
+    )
+    resp = await client.patch(
+        f"/api/portals/{portal['id']}",
+        json={"region": ""},
+        headers=account["headers"],
+    )
+    assert resp.json()["region"] is None
+
+
 async def test_patch_and_delete_rules(client, register, make_group, make_portal):
     owner = await register(username="haris")
     poster = await register(username="ali")

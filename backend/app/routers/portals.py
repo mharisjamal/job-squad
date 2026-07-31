@@ -110,7 +110,7 @@ async def create_portal(
 ) -> dict:
     await require_member(session, gid, user)
     portal = Portal(group_id=gid, name=body.name, url=body.url, notes=body.notes,
-                    created_by=user.id)
+                    region=body.region, created_by=user.id)
     session.add(portal)
     await session.flush()
     await record(
@@ -139,7 +139,7 @@ async def patch_portal(
         if not name:
             raise HTTPException(status_code=422, detail="name must not be blank")
         portal.name = name
-    for field in ("url", "notes"):
+    for field in ("url", "notes", "region"):
         if field in provided:
             setattr(portal, field, provided[field])
     await session.commit()

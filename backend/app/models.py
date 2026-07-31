@@ -135,6 +135,8 @@ class Portal(Base):
     name: Mapped[str] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Which market this portal serves, e.g. "Middle East", "USA", "Global".
+    region: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

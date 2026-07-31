@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { ExternalLink, Globe, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ExternalLink, Globe, MapPin, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { useGroupCtx } from "../components/layout/Shell";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -23,6 +23,22 @@ import type { Portal, PortalMemberStatus, PortalPayload } from "../types/api";
 // Ratings borrow the interview amber: the one warm signal in the system.
 const STAR_ON = "rgb(var(--status-interview-dot))";
 const STAR_OFF = "rgb(var(--line-strong))";
+
+// Common markets, offered as a datalist so entries stay consistent while any
+// custom region is still allowed. Portals are market-specific.
+const REGION_SUGGESTIONS = [
+  "Global",
+  "Remote / Worldwide",
+  "USA",
+  "Canada",
+  "UK",
+  "Europe",
+  "Middle East",
+  "Pakistan",
+  "India",
+  "Southeast Asia",
+  "Australia / NZ",
+];
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
@@ -163,6 +179,7 @@ function PortalFormDialog({
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [region, setRegion] = useState("");
   const [notes, setNotes] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -170,6 +187,7 @@ function PortalFormDialog({
     if (!open) return;
     setName(initial?.name ?? "");
     setUrl(initial?.url ?? "");
+    setRegion(initial?.region ?? "");
     setNotes(initial?.notes ?? "");
     setLocalError(null);
   }, [open, initial]);
@@ -181,7 +199,12 @@ function PortalFormDialog({
       return;
     }
     setLocalError(null);
-    onSubmit({ name: name.trim(), url: normalizeUrl(url) || null, notes: notes.trim() || null });
+    onSubmit({
+      name: name.trim(),
+      url: normalizeUrl(url) || null,
+      region: region.trim() || null,
+      notes: notes.trim() || null,
+    });
   };
 
   const shownError = localError ?? error;
@@ -213,6 +236,25 @@ function PortalFormDialog({
             placeholder="https://linkedin.com/jobs"
             inputMode="url"
           />
+        </div>
+        <div>
+          <label htmlFor="portal-region" className="label">
+            Region or country
+          </label>
+          <input
+            id="portal-region"
+            className="input"
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            placeholder="e.g. Middle East"
+            list="portal-region-suggestions"
+            autoComplete="off"
+          />
+          <datalist id="portal-region-suggestions">
+            {REGION_SUGGESTIONS.map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
         </div>
         <div>
           <label htmlFor="portal-notes" className="label">
@@ -258,6 +300,19 @@ export default function Portals() {
   const [editTarget, setEditTarget] = useState<Portal | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Portal | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [regionFilter, setRegionFilter] = useState("");
+
+  // Region vocabulary in use, harvested from the loaded portals for the filter.
+  const regions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of portals.data ?? []) if (p.region) set.add(p.region);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [portals.data]);
+
+  const visiblePortals = useMemo(() => {
+    const list = portals.data ?? [];
+    return regionFilter ? list.filter((p) => p.region === regionFilter) : list;
+  }, [portals.data, regionFilter]);
 
   return (
     <div className="space-y-4">
@@ -280,6 +335,25 @@ export default function Portals() {
         </button>
       </div>
 
+      {/* Region filter - only once portals actually carry regions */}
+      {!portals.isPending && !portals.isError && regions.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            className="input sm:w-56"
+            value={regionFilter}
+            onChange={(e) => setRegionFilter(e.target.value)}
+            aria-label="Filter by region"
+          >
+            <option value="">All regions</option>
+            {regions.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {portals.isPending ? (
         <div className="grid gap-4 md:grid-cols-2">
           <Skeleton className="h-56" />
@@ -299,9 +373,20 @@ export default function Portals() {
             </button>
           }
         />
+      ) : visiblePortals.length === 0 ? (
+        <EmptyState
+          icon={MapPin}
+          title="No portals for this region"
+          description="No portals for that region yet."
+          action={
+            <button className="btn-ghost" onClick={() => setRegionFilter("")}>
+              Clear filter
+            </button>
+          }
+        />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {portals.data.map((p) => {
+          {visiblePortals.map((p) => {
             const canDelete =
               user != null && (p.created_by === user.id || group.owner_id === user.id);
             const portalHref = safeHref(p.url);
@@ -328,6 +413,12 @@ export default function Portals() {
                       </span>
                     )}
                     <p className="mt-0.5 font-mono text-xs text-muted">{effectivenessLine(p)}</p>
+                    {p.region && (
+                      <span className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-muted">
+                        <MapPin className="h-3 w-3" aria-hidden />
+                        {p.region}
+                      </span>
+                    )}
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <button

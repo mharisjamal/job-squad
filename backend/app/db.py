@@ -136,6 +136,11 @@ async def _migrate_postgres(conn) -> None:
     await conn.execute(
         text("ALTER TABLE applications ADD COLUMN IF NOT EXISTS jd_text TEXT")
     )
+    # The portal market/region column. IF NOT EXISTS keeps this boot-safe
+    # against the live database (which has real portal rows) once present.
+    await conn.execute(
+        text("ALTER TABLE portals ADD COLUMN IF NOT EXISTS region TEXT")
+    )
     # Backfill for resumes uploaded before extraction existed happens lazily on
     # the first match request; no column change is needed for extracted_text /
     # source_tex (create_all added them with the resumes table).
@@ -191,6 +196,13 @@ async def _migrate(engine: AsyncEngine) -> None:
             # PRAGMA check so an existing populated DB keeps all its rows.
             if "jd_text" not in app_columns:
                 await conn.execute(text("ALTER TABLE applications ADD COLUMN jd_text TEXT"))
+        portal_rows = (await conn.execute(text("PRAGMA table_info(portals)"))).all()
+        if portal_rows:
+            portal_columns = {row[1] for row in portal_rows}
+            # The portal market/region column. Guarded by the PRAGMA check so an
+            # existing populated portals table keeps every row.
+            if "region" not in portal_columns:
+                await conn.execute(text("ALTER TABLE portals ADD COLUMN region TEXT"))
 
 
 async def _rebuild_users_table(conn) -> None:

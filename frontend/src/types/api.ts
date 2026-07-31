@@ -148,6 +148,8 @@ export interface Portal {
   name: string;
   url: string | null;
   notes: string | null;
+  /** Market this portal serves, e.g. "Middle East", "USA", "Global". */
+  region: string | null;
   created_by: number;
   created_by_username: string;
   created_at: string;
@@ -276,6 +278,7 @@ export interface PortalPayload {
   name: string;
   url?: string | null;
   notes?: string | null;
+  region?: string | null;
 }
 
 export interface PortalStatusUpsert {

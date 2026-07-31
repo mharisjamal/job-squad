@@ -119,7 +119,9 @@ def create_app() -> FastAPI:
     # not under /api. Registered before the SPA catch-all so it wins the match.
     app.include_router(shares.router)
 
-    @app.get("/health")
+    # GET and HEAD both allowed: uptime monitors often ping with HEAD by
+    # default, and a HEAD-only 405 would make them report the service as down.
+    @app.api_route("/health", methods=["GET", "HEAD"])
     async def health() -> dict:
         return {"status": "ok"}
 

@@ -104,6 +104,19 @@ def _mock_reply(monkeypatch, *replies):
     return calls
 
 
+def _tex_reply(tex: str, changes: list[str], end: bool = True) -> str:
+    """Build a sentinel-delimited tex tailoring reply (the new tex contract)."""
+    body = (
+        "===CHANGES===\n"
+        + "".join(f"- {c}\n" for c in changes)
+        + "===TAILORED_TEX===\n"
+        + tex
+    )
+    if end:
+        body += "\n===END==="
+    return body
+
+
 # ---------------------------------------------------------------------------
 # System-prompt constraint gate (unit; the R3 verifier requires these)
 # ---------------------------------------------------------------------------
@@ -133,8 +146,15 @@ def test_system_prompt_encodes_the_researched_constraints():
         assert "GAP suggestion" in prompt
 
 
-def test_tex_and_advice_prompts_ask_for_the_right_json():
-    assert "tailored_tex" in ai_module.build_tailor_system_prompt("tex")
+def test_tex_prompt_uses_sentinels_and_advice_prompt_uses_json():
+    tex_prompt = ai_module.build_tailor_system_prompt("tex")
+    # The tex path is sentinel-delimited plain text, NOT JSON (JSON-escaping
+    # backslash-heavy LaTeX is what mid-tier models fail).
+    assert "===TAILORED_TEX===" in tex_prompt
+    assert "===CHANGES===" in tex_prompt
+    assert "===END===" in tex_prompt
+    assert "Do NOT return JSON" in tex_prompt
+    # The advice path stays on JSON.
     assert "suggestions" in ai_module.build_tailor_system_prompt("pdf")
     assert "keywords_to_add" in ai_module.build_tailor_system_prompt("docx")
 
@@ -160,9 +180,9 @@ async def test_tailor_tex_returns_tailored_tex_and_changes(
     await configure_ai(account["headers"])
     app_id = await _app_id(client, account["headers"], group["id"])
 
-    reply = json.dumps(
-        {"tailored_tex": "\\documentclass{article}\\begin{document}Hi\\end{document}",
-         "changes": ["Reordered skills to lead with Python", "Sharpened the summary"]}
+    reply = _tex_reply(
+        "\\documentclass{article}\\begin{document}Hi\\end{document}",
+        ["Reordered skills to lead with Python", "Sharpened the summary"],
     )
     calls = _mock_reply(monkeypatch, reply)
 
@@ -189,8 +209,206 @@ async def test_tailor_tex_returns_tailored_tex_and_changes(
 
 
 # ---------------------------------------------------------------------------
+# Tex sentinel parser (unit) - the fix for backslash-heavy JSON failures
+# ---------------------------------------------------------------------------
+
+
+def test_parse_tailored_tex_valid():
+    reply = _tex_reply(
+        "\\documentclass{article}\\begin{document}Hi\\end{document}",
+        ["did a", "did b"],
+    )
+    parsed = ai_module.parse_tailored_tex(reply)
+    assert parsed is not None
+    assert parsed["tailored_tex"] == "\\documentclass{article}\\begin{document}Hi\\end{document}"
+    assert parsed["changes"] == ["did a", "did b"]
+
+
+def test_parse_tailored_tex_without_end_marker():
+    # No ===END===: the tex block runs to the end of the message.
+    reply = _tex_reply("\\documentclass{article}\nBody to the end", ["x"], end=False)
+    parsed = ai_module.parse_tailored_tex(reply)
+    assert parsed is not None
+    assert parsed["tailored_tex"] == "\\documentclass{article}\nBody to the end"
+
+
+def test_parse_tailored_tex_missing_source_marker_is_none():
+    assert ai_module.parse_tailored_tex("just some prose, no markers") is None
+    # A JSON reply (the old contract) no longer parses on the tex path.
+    assert ai_module.parse_tailored_tex('{"tailored_tex": "x"}') is None
+
+
+def test_parse_tailored_tex_requires_documentclass():
+    # Marker present but the block is not a real LaTeX document -> parse failure.
+    reply = "===TAILORED_TEX===\nnot really latex\n===END==="
+    assert ai_module.parse_tailored_tex(reply) is None
+    # Empty tex block -> parse failure.
+    assert ai_module.parse_tailored_tex("===TAILORED_TEX===\n\n===END===") is None
+
+
+def test_parse_tailored_tex_preserves_backslashes():
+    # The whole point: raw LaTeX with many backslashes survives verbatim (no
+    # JSON escaping, which mid-tier models get wrong most of the time).
+    tex = (
+        "\\documentclass{article}\n\\usepackage{geometry}\n"
+        "\\begin{document}\n\\section{Experience}\n\\textbf{Engineer} at ACME\n"
+        "\\end{document}"
+    )
+    parsed = ai_module.parse_tailored_tex(_tex_reply(tex, ["reworded a bullet"]))
+    assert parsed is not None
+    assert parsed["tailored_tex"] == tex
+    assert parsed["tailored_tex"].count("\\") == tex.count("\\")
+
+
+def test_parse_tailored_tex_strips_code_fence():
+    reply = (
+        "===TAILORED_TEX===\n```latex\n\\documentclass{article}\nHi\n```\n===END==="
+    )
+    parsed = ai_module.parse_tailored_tex(reply)
+    assert parsed is not None
+    assert parsed["tailored_tex"] == "\\documentclass{article}\nHi"
+
+
+async def test_tailor_tex_retries_then_502_when_markers_missing(
+    client, register, make_group, make_company, upload_tex, set_application,
+    configure_ai, monkeypatch,
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"])
+    resume = await upload_tex(account["headers"])
+    await set_application(
+        account["headers"], company["id"], status="applied",
+        resume_id=resume["id"], jd_text="Python",
+    )
+    await configure_ai(account["headers"])
+    app_id = await _app_id(client, account["headers"], group["id"])
+
+    # Marker present but no \documentclass both times -> retry once -> 502.
+    bad = "===TAILORED_TEX===\nno document class here\n===END==="
+    calls = _mock_reply(monkeypatch, bad, bad)
+    resp = await client.post(
+        f"/api/applications/{app_id}/tailor",
+        json={"resume_id": resume["id"]},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 502
+    assert calls["count"] == 2
+
+
+# ---------------------------------------------------------------------------
 # Advice path (pdf/docx)
 # ---------------------------------------------------------------------------
+
+
+async def _advice_setup(
+    client, register, make_group, make_company, upload_docx, set_application,
+    configure_ai, resume_body, jd_text,
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"])
+    resume = await upload_docx(account["headers"], body=resume_body)
+    await set_application(
+        account["headers"], company["id"],
+        status="applied", resume_id=resume["id"], jd_text=jd_text,
+    )
+    await configure_ai(account["headers"])
+    app_id = await _app_id(client, account["headers"], group["id"])
+    return account, resume, app_id
+
+
+# ---------------------------------------------------------------------------
+# Deterministic skill backstop (advice branch): a suggested rewrite must never
+# introduce a skill the resume lacks, even if the model tries to.
+# ---------------------------------------------------------------------------
+
+
+async def test_backstop_drops_suggestion_that_adds_unlisted_skill(
+    client, register, make_group, make_company, upload_docx, set_application,
+    configure_ai, monkeypatch,
+):
+    # Resume has Azure (not AWS); the JD wants AWS.
+    account, resume, app_id = await _advice_setup(
+        client, register, make_group, make_company, upload_docx, set_application,
+        configure_ai, resume_body="Azure Python developer",
+        jd_text="We need AWS, Python, and Azure.",
+    )
+    reply = json.dumps(
+        {"suggestions": [
+            # Fabricates AWS -> must be dropped by the backstop.
+            {"section": "Skills", "original": "Azure",
+             "suggested": "experience with AWS", "reason": "match the JD"},
+            # Reuses only existing skills -> must be kept.
+            {"section": "Summary", "original": "developer",
+             "suggested": "Python developer", "reason": "sharper"}],
+         "keywords_to_add": []}
+    )
+    _mock_reply(monkeypatch, reply)
+
+    resp = await client.post(
+        f"/api/applications/{app_id}/tailor",
+        json={"resume_id": resume["id"]},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["kind"] == "advice"
+    # The fabricating suggestion is gone; only the safe rephrase remains.
+    assert len(body["suggestions"]) == 1
+    assert body["suggestions"][0]["suggested"] == "Python developer"
+    assert all("AWS" not in s["suggested"] for s in body["suggestions"])
+    # The dropped-but-JD-wanted skill is surfaced honestly as a gap.
+    assert "AWS" in body["keywords_to_add"]
+
+
+async def test_backstop_keeps_rephrase_using_existing_skills(
+    client, register, make_group, make_company, upload_docx, set_application,
+    configure_ai, monkeypatch,
+):
+    account, resume, app_id = await _advice_setup(
+        client, register, make_group, make_company, upload_docx, set_application,
+        configure_ai, resume_body="Azure Python developer", jd_text="Azure and Python.",
+    )
+    suggestion = {
+        "section": "Summary", "original": "developer",
+        "suggested": "Experienced developer skilled in Azure and Python",
+        "reason": "aligns with the JD",
+    }
+    _mock_reply(monkeypatch, json.dumps({"suggestions": [suggestion], "keywords_to_add": []}))
+
+    resp = await client.post(
+        f"/api/applications/{app_id}/tailor",
+        json={"resume_id": resume["id"]},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["suggestions"] == [suggestion]  # kept unchanged
+
+
+async def test_backstop_trims_covered_skills_from_keywords(
+    client, register, make_group, make_company, upload_docx, set_application,
+    configure_ai, monkeypatch,
+):
+    account, resume, app_id = await _advice_setup(
+        client, register, make_group, make_company, upload_docx, set_application,
+        configure_ai, resume_body="Azure developer", jd_text="AWS and Azure.",
+    )
+    # The model lists Azure (already on the resume) and AWS (a real gap).
+    _mock_reply(
+        monkeypatch,
+        json.dumps({"suggestions": [], "keywords_to_add": ["Azure", "AWS"]}),
+    )
+
+    resp = await client.post(
+        f"/api/applications/{app_id}/tailor",
+        json={"resume_id": resume["id"]},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    keywords = resp.json()["keywords_to_add"]
+    assert "Azure" not in keywords  # already covered, not a gap
+    assert "AWS" in keywords
 
 
 async def test_tailor_docx_returns_advice_suggestions(
@@ -213,7 +431,9 @@ async def test_tailor_docx_returns_advice_suggestions(
         {"suggestions": [
             {"section": "Summary", "original": "developer",
              "suggested": "backend developer", "reason": "matches the JD"}],
-         "keywords_to_add": ["Docker"]}
+         # A genuine gap (not in the default resume body), so it survives the
+         # backstop's covered-skill trim.
+         "keywords_to_add": ["Kubernetes"]}
     )
     _mock_reply(monkeypatch, reply)
 
@@ -229,7 +449,7 @@ async def test_tailor_docx_returns_advice_suggestions(
         "section": "Summary", "original": "developer",
         "suggested": "backend developer", "reason": "matches the JD",
     }
-    assert body["keywords_to_add"] == ["Docker"]
+    assert body["keywords_to_add"] == ["Kubernetes"]
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +561,8 @@ async def test_tailor_retries_once_on_bad_json_then_succeeds(
     await configure_ai(account["headers"])
     app_id = await _app_id(client, account["headers"], group["id"])
 
-    good = json.dumps({"tailored_tex": "\\documentclass{article}", "changes": []})
-    calls = _mock_reply(monkeypatch, "here is your resume, not json", good)
+    good = _tex_reply("\\documentclass{article}", [])
+    calls = _mock_reply(monkeypatch, "here is your resume, no markers at all", good)
 
     resp = await client.post(
         f"/api/applications/{app_id}/tailor",

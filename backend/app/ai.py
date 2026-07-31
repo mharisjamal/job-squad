@@ -9,6 +9,7 @@ to the client and API keys are never logged.
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -119,17 +120,29 @@ TAILOR_CONSTRAINTS = (
     "8. If the job description requires something the resume does not support, report "
     'it as a GAP suggestion ("consider adding X if you have it"), never silently '
     "write it into the resume.\n"
-    "9. Reason through the changes before writing, then return ONLY the JSON described "
-    "below: no prose, no explanation, no markdown, no code fences."
+    "8a. A 'suggested' rewrite may reference ONLY skills, tools, and facts that already "
+    "appear in the resume. NEVER insert a job-description skill the resume lacks into a "
+    "rewritten line (for example, do not add 'AWS' to a rewrite if the resume shows only "
+    "Azure). Missing skills belong ONLY in the gap/keywords list, never woven into a "
+    "suggestion. Also never drop real skills the candidate already lists when rephrasing.\n"
+    "9. Reason through the changes before writing, then return ONLY the output described "
+    "below: no extra prose, no explanation, no code fences."
 )
 
 _TEX_OUTPUT_SCHEMA = (
-    "The candidate's resume is LaTeX source. Return this exact JSON object and "
-    "nothing else:\n"
-    '{"tailored_tex": "<the full edited .tex document as one string>", '
-    '"changes": ["short summary of each change you made"]}\n'
-    "The tailored_tex must be a complete, compilable LaTeX document derived from the "
-    "original, obeying every constraint above."
+    "The candidate's resume is LaTeX source. Do NOT return JSON. LaTeX is full of "
+    "backslashes, so JSON escaping is error-prone; instead return EXACTLY this "
+    "plain-text shape and nothing else (no code fences, no commentary):\n"
+    "===CHANGES===\n"
+    "- one short line describing a change you made\n"
+    "- another change\n"
+    "===TAILORED_TEX===\n"
+    "\\documentclass... (the full edited LaTeX document, raw, with no escaping and "
+    "no code fences)\n"
+    "===END===\n"
+    "The block after ===TAILORED_TEX=== must be a complete, compilable LaTeX "
+    "document derived from the original (it must contain \\documentclass), obeying "
+    "every constraint above."
 )
 
 _ADVICE_OUTPUT_SCHEMA = (
@@ -150,6 +163,22 @@ _JSON_RETRY_NUDGE = (
     "Your previous reply was not valid JSON. Return ONLY the JSON object described"
     " earlier, with no prose, no markdown, and no code fences."
 )
+
+# Sentinel markers for the tex tailoring reply. Plain-text delimiters instead of
+# JSON so the model never has to escape the backslash-heavy LaTeX (mid-tier
+# models fail JSON-escaping most of the time, which used to 502 the tex path).
+_TEX_CHANGES_MARKER = "===CHANGES==="
+_TEX_SOURCE_MARKER = "===TAILORED_TEX==="
+_TEX_END_MARKER = "===END==="
+
+_TEX_RETRY_NUDGE = (
+    "Your previous reply did not use the required markers. Return the result using"
+    " EXACTLY these markers and nothing else: a ===CHANGES=== section (one '- ' line"
+    " per change), then ===TAILORED_TEX=== followed by the full raw LaTeX document"
+    " (no JSON, no escaping, no code fences), then ===END===."
+)
+
+_BULLET_RE = re.compile(r"^[-*]\s*")
 
 
 def build_tailor_system_prompt(kind: str) -> str:
@@ -189,6 +218,59 @@ def parse_tailor_json(text: str) -> dict | None:
     except (ValueError, TypeError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _strip_code_fence(text: str) -> str:
+    """Drop a leading ```lang line and a trailing ``` fence if the model added one."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    newline = stripped.find("\n")
+    if newline != -1:
+        stripped = stripped[newline + 1 :]
+    if stripped.rstrip().endswith("```"):
+        stripped = stripped.rstrip()[:-3]
+    return stripped.strip()
+
+
+def _parse_change_lines(block: str) -> list[str]:
+    """One change per non-empty line, with a leading '- '/'* ' bullet removed."""
+    changes: list[str] = []
+    for raw_line in block.splitlines():
+        line = _BULLET_RE.sub("", raw_line.strip()).strip()
+        if line:
+            changes.append(line)
+    return changes
+
+
+def parse_tailored_tex(text: str) -> dict | None:
+    """Parse the sentinel-delimited tex reply into {"tailored_tex", "changes"}.
+
+    Plain-text markers mean the model returns raw LaTeX with no JSON escaping.
+    Returns None (a parse failure) when the ===TAILORED_TEX=== block is absent,
+    empty, or not a real LaTeX document, so the caller can retry once then 502.
+    """
+    if _TEX_SOURCE_MARKER not in text:
+        return None
+    before, _, after = text.partition(_TEX_SOURCE_MARKER)
+    # Everything up to ===END===, or to the end of the message when it is absent.
+    tex_block = after.split(_TEX_END_MARKER, 1)[0]
+    tex = _strip_code_fence(tex_block)
+    if not tex or "\\documentclass" not in tex:
+        return None
+    # Changes are the lines after ===CHANGES=== (or whatever preceded the tex
+    # marker when the model omitted the changes marker).
+    changes_block = before.split(_TEX_CHANGES_MARKER, 1)[-1]
+    return {"tailored_tex": tex, "changes": _parse_change_lines(changes_block)}
+
+
+def tex_retry_messages(messages: list[dict], previous_reply: str) -> list[dict]:
+    """Extend a tex conversation with the bad reply and a use-the-markers nudge."""
+    return [
+        *messages,
+        {"role": "assistant", "content": previous_reply},
+        {"role": "user", "content": _TEX_RETRY_NUDGE},
+    ]
 
 
 def json_retry_messages(messages: list[dict], previous_reply: str) -> list[dict]:

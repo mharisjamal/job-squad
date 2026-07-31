@@ -1,5 +1,7 @@
 """Application endpoints: PUT upsert of my row, delete mine, group-wide list."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +29,8 @@ from ..models import (
 from ..schemas import ApplicationPutIn, TailorIn, serialize_application_full
 from ..security import decrypt_secret
 from ..skills import find_skills
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["applications"])
 
@@ -263,25 +267,35 @@ async def _resume_source_for_tailor(session: AsyncSession, resume: Resume) -> st
 
 
 async def _tailor_via_ai(kind: str, resume_text: str, jd_text: str, **client_kwargs) -> dict:
-    """Call the AI once, parse JSON, retry once with a JSON-only nudge, else 502."""
+    """Call the AI once, parse, retry once with a format nudge, else 502.
+
+    The tex path parses SENTINEL-delimited plain text (the model returns raw
+    LaTeX, never JSON-escaped - mid-tier models fail that escaping most of the
+    time). The advice path stays on JSON (short strings, which they get right).
+    """
+    if kind == "tex":
+        parse = ai.parse_tailored_tex
+        build_retry = ai.tex_retry_messages
+        fail_detail = "The AI did not return the tailored resume in the expected format. Try again."
+    else:
+        parse = ai.parse_tailor_json
+        build_retry = ai.json_retry_messages
+        fail_detail = "The AI provider did not return usable JSON. Try again."
+
     messages = ai.build_tailor_messages(kind, resume_text, jd_text)
     try:
         reply = await ai.chat_completion(messages=messages, **client_kwargs)
     except ai.AIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    parsed = ai.parse_tailor_json(reply)
+    parsed = parse(reply)
     if parsed is None:
-        retry_messages = ai.json_retry_messages(messages, reply)
         try:
-            reply = await ai.chat_completion(messages=retry_messages, **client_kwargs)
+            reply = await ai.chat_completion(messages=build_retry(messages, reply), **client_kwargs)
         except ai.AIError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        parsed = ai.parse_tailor_json(reply)
+        parsed = parse(reply)
     if parsed is None:
-        raise HTTPException(
-            status_code=502,
-            detail="The AI provider did not return usable JSON. Try again.",
-        )
+        raise HTTPException(status_code=502, detail=fail_detail)
     return parsed
 
 
@@ -344,13 +358,66 @@ async def tailor_application(
                 status_code=502, detail="The AI did not return tailored LaTeX. Try again."
             )
         changes = [str(c) for c in parsed.get("changes", []) if isinstance(c, str | int | float)]
+        # No skill backstop on the tex branch: tailored_tex is shown to the user
+        # as a full before/after diff they review and accept, so a fabricated
+        # skill would be visible and rejectable, not silently applied.
         return {"kind": "tex", "tailored_tex": tailored, "changes": changes}
 
-    suggestions = _clean_suggestions(parsed.get("suggestions"))
+    # ADVICE branch (pdf/docx): the model returns suggested rewrites. A mid-tier
+    # model sometimes writes a JD skill the resume LACKS into a "suggested"
+    # rewrite as if the candidate had it - the highest-harm output (it could get
+    # the user caught lying). Deterministic backstop that does NOT trust the
+    # model to obey the prompt.
+    resume_skills = set(find_skills(resume_text))
+    jd_skills = set(find_skills(jd))
+    raw_suggestions = _clean_suggestions(parsed.get("suggestions"))
     keywords = [
         str(k) for k in (parsed.get("keywords_to_add") or []) if isinstance(k, str | int | float)
     ]
+    suggestions, keywords = _apply_skill_backstop(
+        raw_suggestions, keywords, resume_skills, jd_skills
+    )
     return {"kind": "advice", "suggestions": suggestions, "keywords_to_add": keywords}
+
+
+def _apply_skill_backstop(
+    suggestions: list[dict],
+    keywords: list[str],
+    resume_skills: set[str],
+    jd_skills: set[str],
+) -> tuple[list[dict], list[str]]:
+    """Drop any suggestion whose rewrite introduces a skill the resume lacks.
+
+    Conservative: a legitimate rephrase reuses only existing skills (added is
+    empty) and is kept verbatim. A dropped skill that the JD actually wants is
+    re-surfaced honestly in keywords_to_add ("add X if true"), never as a
+    fait-accompli rewrite. keywords_to_add is then trimmed to genuine gaps.
+    """
+    kept: list[dict] = []
+    dropped_skills: set[str] = set()
+    for suggestion in suggestions:
+        added = set(find_skills(suggestion["suggested"])) - resume_skills
+        if added:
+            dropped_skills |= added
+            continue
+        kept.append(suggestion)
+    filtered = len(suggestions) - len(kept)
+    if filtered:
+        logger.debug("tailor advice: dropped %d suggestion(s) that added unlisted skills", filtered)
+
+    result_keywords = list(keywords)
+    # A dropped, JD-wanted skill is still shown as an honest gap.
+    for skill in dropped_skills:
+        if skill in jd_skills and skill not in result_keywords:
+            result_keywords.append(skill)
+    # Genuine gaps only: drop any keyword the resume already covers (via the same
+    # alias-aware matcher), so covered skills never clutter the gap list.
+    result_keywords = [
+        keyword
+        for keyword in result_keywords
+        if not (set(find_skills(keyword)) & resume_skills)
+    ]
+    return kept, result_keywords
 
 
 def _clean_suggestions(raw) -> list[dict]:

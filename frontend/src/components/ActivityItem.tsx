@@ -16,6 +16,13 @@ export function activitySentence(a: Activity): string {
   switch (a.type) {
     case "member_joined":
       return "joined the group";
+    case "join_requested":
+      return "asked to join the group";
+    case "member_removed": {
+      const removed = a.detail["removed_user_name"];
+      if (typeof removed === "string" && removed.length > 0) return `removed ${removed}`;
+      return "removed a member";
+    }
     case "company_added":
       return `added ${company}`;
     case "portal_added":

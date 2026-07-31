@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -91,6 +92,13 @@ class Group(Base):
     name: Mapped[str] = mapped_column(Text)
     invite_code: Mapped[str] = mapped_column(String(8), unique=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    # 'private' (code-only, not discoverable) | 'public' (in the discover
+    # directory, request-to-join). Default private matches pre-G1 behavior.
+    visibility: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="private", server_default=text("'private'")
+    )
+    # Shown in the discover directory; capped at 280 chars by the schema layer.
+    description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -106,6 +114,42 @@ class GroupMember(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     role: Mapped[str] = mapped_column(String(10), default="member")
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class GroupJoinRequest(Base):
+    """A request to join a PUBLIC group, pending the owner's decision.
+
+    At most one PENDING row per (group, user), enforced by a partial-unique
+    index (a rejected user may request again). decided_at/decided_by are filled
+    when the owner approves or rejects.
+    """
+
+    __tablename__ = "group_join_requests"
+    __table_args__ = (
+        Index("ix_group_join_requests_group_status", "group_id", "status"),
+        # At most one PENDING request per (group, user), enforced at the DB
+        # level on BOTH dialects. A partial index (only WHERE status='pending')
+        # so decided rows - a user may be rejected then request again - do not
+        # collide. Ships with create_all on this new table; no extra migration.
+        Index(
+            "uq_pending_join_request",
+            "group_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
 class Company(Base):

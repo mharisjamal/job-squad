@@ -18,6 +18,7 @@ from .models import (
     Comment,
     Company,
     Group,
+    GroupJoinRequest,
     GroupMember,
     Portal,
     PortalStatus,
@@ -39,8 +40,12 @@ NOTES_MAX = 10000
 JD_TEXT_MAX = 50000
 # A portal's market label, e.g. "Middle East", "USA", "Global".
 REGION_MAX = 60
+# A group's discover-directory blurb.
+DESCRIPTION_MAX = 280
 TAGS_MAX_ITEMS = 20
 TagStr = Annotated[str, StringConstraints(max_length=50)]
+
+GroupVisibility = Literal["private", "public"]
 
 
 class RegisterIn(BaseModel):
@@ -106,6 +111,18 @@ def _clean_region(value: str | None) -> str | None:
     return value.strip() or None
 
 
+def _clean_description(value: str | None) -> str | None:
+    """Trim a group description; empty becomes null; over the cap raises 422."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > DESCRIPTION_MAX:
+        raise ValueError(f"description must be at most {DESCRIPTION_MAX} characters")
+    return value
+
+
 class RegisterStartIn(RegisterIn):
     """Same body as RegisterIn: {display_name, email, password}."""
 
@@ -130,6 +147,8 @@ class RegisterVerifyIn(BaseModel):
 
 class GroupCreateIn(BaseModel):
     name: str = Field(max_length=NAME_MAX)
+    visibility: GroupVisibility = "private"
+    description: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -139,13 +158,37 @@ class GroupCreateIn(BaseModel):
             raise ValueError("name must not be blank")
         return value
 
+    @field_validator("description")
+    @classmethod
+    def _clean_description_value(cls, value: str | None) -> str | None:
+        return _clean_description(value)
+
 
 class GroupJoinIn(BaseModel):
     invite_code: str = Field(max_length=20)
 
 
-class GroupRenameIn(GroupCreateIn):
-    pass
+class GroupPatchIn(BaseModel):
+    """Owner edit of a group. Merge semantics: only provided fields change."""
+
+    name: str | None = Field(default=None, max_length=NAME_MAX)
+    visibility: GroupVisibility | None = None
+    description: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _clean_description_value(cls, value: str | None) -> str | None:
+        return _clean_description(value)
 
 
 class CompanyCreateIn(BaseModel):
@@ -312,14 +355,36 @@ def serialize_user(user: User) -> dict:
     }
 
 
-def serialize_group(group: Group, member_count: int) -> dict:
-    return {
+def serialize_group(
+    group: Group,
+    member_count: int,
+    *,
+    pending_request_count: int | None = None,
+) -> dict:
+    payload = {
         "id": group.id,
         "name": group.name,
         "invite_code": group.invite_code,
         "owner_id": group.owner_id,
+        "visibility": group.visibility,
+        "description": group.description,
         "created_at": iso_z(group.created_at),
         "member_count": member_count,
+    }
+    # Present only for the owner (the count is meaningless to non-owners, who
+    # cannot see or act on requests); omitted entirely otherwise.
+    if pending_request_count is not None:
+        payload["pending_request_count"] = pending_request_count
+    return payload
+
+
+def serialize_join_request(req: GroupJoinRequest, user: User) -> dict:
+    return {
+        "id": req.id,
+        "user_id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "created_at": iso_z(req.created_at),
     }
 
 

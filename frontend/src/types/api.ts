@@ -13,6 +13,8 @@ export type PortalMemberStatus = "none" | "signed_up" | "active" | "abandoned";
 
 export type ActivityType =
   | "member_joined"
+  | "member_removed"
+  | "join_requested"
   | "company_added"
   | "portal_added"
   | "application_status_changed"
@@ -34,6 +36,8 @@ export interface AuthResponse {
   user: User;
 }
 
+export type GroupVisibility = "private" | "public";
+
 export interface Group {
   id: number;
   name: string;
@@ -41,6 +45,10 @@ export interface Group {
   owner_id: number;
   created_at: string;
   member_count: number;
+  visibility: GroupVisibility;
+  description: string | null;
+  /** Owner-only; omitted or 0 for non-owners. Drives the Members nav badge. */
+  pending_request_count?: number;
 }
 
 export interface GroupMember {
@@ -53,6 +61,34 @@ export interface GroupMember {
 
 export interface GroupDetail extends Group {
   members: GroupMember[];
+}
+
+/** A public group in the discover directory (GET /api/groups/discover). */
+export interface DiscoverGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  member_count: number;
+  /** The caller's standing with this group: no request, or one pending. */
+  request_status: "none" | "pending";
+}
+
+/** A pending join request for the owner's review (GET /api/groups/{gid}/requests). */
+export interface JoinRequest {
+  id: number;
+  user_id: number;
+  username: string;
+  display_name: string;
+  created_at: string;
+}
+
+/** The raw join-request row returned by POST /api/groups/{gid}/request. */
+export interface JoinRequestRecord {
+  id: number;
+  group_id: number;
+  user_id: number;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
 }
 
 export interface ApplicationBrief {
@@ -247,6 +283,18 @@ export interface RegisterStartResponse {
 export interface RegisterVerifyRequest {
   email: string;
   code: string;
+}
+
+export interface GroupCreatePayload {
+  name: string;
+  visibility?: GroupVisibility;
+  description?: string | null;
+}
+
+export interface GroupPatch {
+  name?: string;
+  visibility?: GroupVisibility;
+  description?: string | null;
 }
 
 export interface CompanyPayload {

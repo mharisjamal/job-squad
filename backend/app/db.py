@@ -141,6 +141,18 @@ async def _migrate_postgres(conn) -> None:
     await conn.execute(
         text("ALTER TABLE portals ADD COLUMN IF NOT EXISTS region TEXT")
     )
+    # Phase G1: group visibility + description. The NOT NULL DEFAULT 'private'
+    # backfills every existing group row on the live Neon database, so groups
+    # created before G1 become private (their current, code-only behavior).
+    await conn.execute(
+        text(
+            "ALTER TABLE groups ADD COLUMN IF NOT EXISTS visibility TEXT"
+            " NOT NULL DEFAULT 'private'"
+        )
+    )
+    await conn.execute(
+        text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS description TEXT")
+    )
     # Backfill for resumes uploaded before extraction existed happens lazily on
     # the first match request; no column change is needed for extracted_text /
     # source_tex (create_all added them with the resumes table).
@@ -203,6 +215,21 @@ async def _migrate(engine: AsyncEngine) -> None:
             # existing populated portals table keeps every row.
             if "region" not in portal_columns:
                 await conn.execute(text("ALTER TABLE portals ADD COLUMN region TEXT"))
+        group_rows = (await conn.execute(text("PRAGMA table_info(groups)"))).all()
+        if group_rows:
+            group_columns = {row[1] for row in group_rows}
+            # Phase G1: visibility + description. ADD COLUMN with a NOT NULL and a
+            # constant default is legal in SQLite; every existing group row gets
+            # 'private', so populated databases keep all their rows unchanged.
+            if "visibility" not in group_columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE groups ADD COLUMN visibility TEXT"
+                        " NOT NULL DEFAULT 'private'"
+                    )
+                )
+            if "description" not in group_columns:
+                await conn.execute(text("ALTER TABLE groups ADD COLUMN description TEXT"))
 
 
 async def _rebuild_users_table(conn) -> None:

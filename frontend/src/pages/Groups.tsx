@@ -1,18 +1,32 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, LogOut, Plus, Ticket, Users } from "lucide-react";
-import { useCreateGroup, useGroups, useJoinGroup } from "../hooks/useGroups";
+import { Check, ChevronDown, Compass, LogOut, Plus, Search, Ticket, UserPlus, Users } from "lucide-react";
+import {
+  useCreateGroup,
+  useDiscoverGroups,
+  useGroups,
+  useJoinGroup,
+  useRequestJoin,
+} from "../hooks/useGroups";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../components/ui/Toast";
 import { Dialog } from "../components/ui/Dialog";
 import { CopyChip } from "../components/ui/CopyChip";
+import { VisibilityChip, VisibilityToggle } from "../components/ui/VisibilityChip";
 import { Avatar } from "../components/ui/MemberChip";
 import { Menu, MenuItem } from "../components/ui/Menu";
 import { EmptyState, ErrorState } from "../components/ui/EmptyState";
 import { Skeleton } from "../components/ui/Spinner";
 import { ApiError } from "../lib/api";
 import { formatDate } from "../lib/format";
+import type { DiscoverGroup, GroupVisibility } from "../types/api";
+
+const DESCRIPTION_MAX = 280;
+
+function errMsg(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
 export default function Groups() {
   const navigate = useNavigate();
@@ -25,6 +39,8 @@ export default function Groups() {
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
   const [name, setName] = useState("");
+  const [visibility, setVisibility] = useState<GroupVisibility>("private");
+  const [description, setDescription] = useState("");
   const [code, setCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -39,6 +55,14 @@ export default function Groups() {
     }
   }, [groups.data, navigate]);
 
+  const openCreate = () => {
+    setFormError(null);
+    setName("");
+    setVisibility("private");
+    setDescription("");
+    setCreateOpen(true);
+  };
+
   const submitCreate = (e: FormEvent) => {
     e.preventDefault();
     if (name.trim().length === 0) {
@@ -46,16 +70,17 @@ export default function Groups() {
       return;
     }
     setFormError(null);
-    createGroup.mutate(name.trim(), {
-      onSuccess: (g) => {
-        setCreateOpen(false);
-        setName("");
-        toast(`Group "${g.name}" created`);
-        navigate(`/g/${g.id}`);
+    createGroup.mutate(
+      { name: name.trim(), visibility, description: description.trim() || null },
+      {
+        onSuccess: (g) => {
+          setCreateOpen(false);
+          toast(`Group "${g.name}" created`);
+          navigate(`/g/${g.id}`);
+        },
+        onError: (err) => setFormError(errMsg(err, "Couldn't create the group. Retry.")),
       },
-      onError: (err) =>
-        setFormError(err instanceof ApiError ? err.message : "Couldn't create the group. Retry."),
-    });
+    );
   };
 
   const submitJoin = (e: FormEvent) => {
@@ -77,12 +102,12 @@ export default function Groups() {
         setFormError(
           err instanceof ApiError && err.status === 404
             ? "No group matches that code. Check it with your friend and retry."
-            : err instanceof ApiError
-              ? err.message
-              : "Couldn't join the group. Retry.",
+            : errMsg(err, "Couldn't join the group. Retry."),
         ),
     });
   };
+
+  const descriptionLeft = DESCRIPTION_MAX - description.length;
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-3xl p-6">
@@ -116,17 +141,25 @@ export default function Groups() {
         )}
       </header>
 
+      {/* My groups */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink">Your groups</h1>
           <p className="text-sm text-muted">Pick a squad, or start a new hunt together.</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-ghost" onClick={() => { setFormError(null); setJoinOpen(true); }}>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              setFormError(null);
+              setCode("");
+              setJoinOpen(true);
+            }}
+          >
             <Ticket className="h-4 w-4" aria-hidden />
             Join with code
           </button>
-          <button className="btn-primary" onClick={() => { setFormError(null); setCreateOpen(true); }}>
+          <button className="btn-primary" onClick={openCreate}>
             <Plus className="h-4 w-4" aria-hidden />
             Create group
           </button>
@@ -153,7 +186,7 @@ export default function Groups() {
               <button className="btn-ghost" onClick={() => setJoinOpen(true)}>
                 Join with code
               </button>
-              <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+              <button className="btn-primary" onClick={openCreate}>
                 Create group
               </button>
             </div>
@@ -177,10 +210,13 @@ export default function Groups() {
             >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <h2 className="text-base font-semibold text-ink">{g.name}</h2>
-                <span className="flex items-center gap-1.5 rounded-full bg-canvas px-2.5 py-1 font-mono text-xs text-muted">
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-canvas px-2.5 py-1 font-mono text-xs text-muted">
                   <Users className="h-3 w-3" aria-hidden />
                   {g.member_count}
                 </span>
+              </div>
+              <div className="mb-3">
+                <VisibilityChip visibility={g.visibility} />
               </div>
               <div
                 onClick={(e) => e.stopPropagation()}
@@ -197,6 +233,9 @@ export default function Groups() {
         </div>
       )}
 
+      {/* Discover */}
+      <Discover onJoinWithCode={() => setJoinOpen(true)} onCreate={openCreate} />
+
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create a group">
         <form onSubmit={submitCreate} className="space-y-4">
           <div>
@@ -210,6 +249,34 @@ export default function Groups() {
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Job Hunt 2026"
             />
+          </div>
+          <div>
+            <span className="label">Visibility</span>
+            <VisibilityToggle value={visibility} onChange={setVisibility} />
+            <p className="mt-1.5 text-small text-muted">
+              {visibility === "public"
+                ? "Anyone can find this group in Discover and request to join. You approve each request."
+                : "Hidden from Discover. Only people with the invite code can join."}
+            </p>
+          </div>
+          <div>
+            <label htmlFor="group-description" className="label">
+              Description <span className="text-muted/70">(optional)</span>
+            </label>
+            <textarea
+              id="group-description"
+              className="input min-h-20 resize-y"
+              value={description}
+              onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
+              placeholder="What is this squad hunting for? Shown in Discover."
+              maxLength={DESCRIPTION_MAX}
+              rows={3}
+            />
+            {descriptionLeft <= 40 && (
+              <p className="mt-1 text-right font-mono text-[11px] text-muted">
+                {descriptionLeft} left
+              </p>
+            )}
           </div>
           {formError && (
             <p role="alert" className="text-sm text-danger">
@@ -258,5 +325,132 @@ export default function Groups() {
         </form>
       </Dialog>
     </div>
+  );
+}
+
+function Discover({
+  onJoinWithCode,
+  onCreate,
+}: {
+  onJoinWithCode: () => void;
+  onCreate: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const requestJoin = useRequestJoin();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(search.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  const discover = useDiscoverGroups(debounced);
+  const results = discover.data ?? [];
+
+  const request = (g: DiscoverGroup) => {
+    requestJoin.mutate(g.id, {
+      onSuccess: () => toast(`Request sent to "${g.name}"`),
+      onError: (err) => toast(errMsg(err, "Couldn't send the request. Retry."), "error"),
+    });
+  };
+
+  return (
+    <section className="mt-12">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-ink">Discover</h2>
+        <p className="text-sm text-muted">Public groups you can ask to join.</p>
+      </div>
+
+      <div className="relative mb-4">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+          aria-hidden
+        />
+        <input
+          className="input pl-9"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search public groups by name or description"
+          aria-label="Search public groups"
+        />
+      </div>
+
+      {discover.isPending ? (
+        <div className="space-y-3">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+        </div>
+      ) : discover.isError ? (
+        <ErrorState message="Couldn't load public groups. Retry." onRetry={() => discover.refetch()} />
+      ) : results.length === 0 ? (
+        debounced ? (
+          <EmptyState
+            icon={Search}
+            title="No matches"
+            description={`No public groups match "${debounced}". Try a different search.`}
+          />
+        ) : (
+          <EmptyState
+            icon={Compass}
+            title="Nothing to discover yet"
+            description="No public groups yet. Create one and make it public, or join with a code."
+            action={
+              <div className="flex gap-2">
+                <button className="btn-ghost" onClick={onJoinWithCode}>
+                  Join with code
+                </button>
+                <button className="btn-primary" onClick={onCreate}>
+                  Create group
+                </button>
+              </div>
+            }
+          />
+        )
+      ) : (
+        <ul className="space-y-3">
+          {results.map((g) => {
+            const pending = g.request_status === "pending";
+            const inFlight = requestJoin.isPending && requestJoin.variables === g.id;
+            return (
+              <li
+                key={g.id}
+                className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-sm font-semibold text-ink">{g.name}</h3>
+                    <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] text-muted">
+                      <Users className="h-3 w-3" aria-hidden />
+                      {g.member_count}
+                    </span>
+                  </div>
+                  {g.description && (
+                    <p className="mt-1 line-clamp-2 text-sm text-muted">{g.description}</p>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  {pending ? (
+                    <button className="btn-ghost" disabled aria-label={`Request to ${g.name} is pending`}>
+                      <Check className="h-4 w-4" aria-hidden />
+                      Requested
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => request(g)}
+                      disabled={inFlight}
+                    >
+                      <UserPlus className="h-4 w-4" aria-hidden />
+                      {inFlight ? "Requesting..." : "Request to join"}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

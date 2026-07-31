@@ -9,12 +9,14 @@ import {
   Globe,
   Kanban,
   LayoutDashboard,
+  LayoutGrid,
   LogOut,
   Menu as MenuIcon,
   Moon,
   Repeat,
   Sparkles,
   Sun,
+  Users,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -50,6 +52,7 @@ const NAV = [
   { to: "portals", label: "Portals", icon: Globe, end: false },
   { to: "resumes", label: "Resumes", icon: FileText, end: false },
   { to: "activity", label: "Activity", icon: ActivityIcon, end: false },
+  { to: "members", label: "Members", icon: Users, end: false },
 ];
 
 export function GroupShell() {
@@ -110,11 +113,24 @@ export function GroupShell() {
 
   const group = detail.data;
 
+  // Owner-only pending-request count; drives the Members nav badge.
+  const pendingCount =
+    user != null && group.owner_id === user.id ? (group.pending_request_count ?? 0) : 0;
+
   const sidebar = (
     <nav className="flex h-full flex-col gap-0.5 p-4" aria-label="Group navigation">
       <div className="mb-5 px-3">
         <span className="text-base font-semibold tracking-tight text-ink">JobSquad</span>
       </div>
+      <NavLink
+        to="/"
+        onClick={() => localStorage.removeItem("last_group")}
+        className="nav-item"
+      >
+        <LayoutGrid className="h-4 w-4" aria-hidden />
+        Groups
+      </NavLink>
+      <div className="my-2 h-px bg-line" aria-hidden />
       {NAV.map((item) => (
         <NavLink
           key={item.label}
@@ -124,6 +140,14 @@ export function GroupShell() {
         >
           <item.icon className="h-4 w-4" aria-hidden />
           {item.label}
+          {item.to === "members" && pendingCount > 0 && (
+            <span
+              className="ml-auto inline-flex min-w-[18px] items-center justify-center rounded-full bg-focus/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-focus"
+              aria-label={`${pendingCount} pending join request${pendingCount === 1 ? "" : "s"}`}
+            >
+              {pendingCount}
+            </span>
+          )}
         </NavLink>
       ))}
       <div className="mt-auto space-y-1.5 px-3 pt-4">

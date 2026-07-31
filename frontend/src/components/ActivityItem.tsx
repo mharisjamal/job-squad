@@ -23,6 +23,12 @@ export function activitySentence(a: Activity): string {
       if (typeof removed === "string" && removed.length > 0) return `removed ${removed}`;
       return "removed a member";
     }
+    case "ownership_transferred": {
+      const newOwner = a.detail["new_owner_name"];
+      if (typeof newOwner === "string" && newOwner.length > 0)
+        return `made ${newOwner} the owner`;
+      return "transferred ownership";
+    }
     case "company_added":
       return `added ${company}`;
     case "portal_added":

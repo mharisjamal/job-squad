@@ -211,8 +211,9 @@ GroupDetail     Group + {members: [{user_id, username, display_name, role, joine
 - `GET /api/groups` -> `[Group]` (mine only).
 - `GET /api/groups/{gid}` -> `GroupDetail` (members only).
 - `POST /api/groups/join` `{invite_code}` -> `Group`. Case-insensitive code. 404 unknown code; joining twice is idempotent (returns group).
-- `POST /api/groups/{gid}/leave` -> `{ok: true}`. Owner cannot leave while other members exist (400). The last remaining member cannot leave either (400; group deletion is a non-goal, so no path may destroy group data). A successful leave also deletes the leaver's applications and portal statuses in that group (their personal pipeline goes with them; stats stay reconciled); their comments and activity rows remain as history.
+- `POST /api/groups/{gid}/leave` -> `{ok: true}`. Owner cannot leave while other members exist (400, message "Transfer ownership to another member first, then you can leave." - see Phase G2). The last remaining member cannot leave either (400; group deletion is a non-goal, so no path may destroy group data). A successful leave also deletes the leaver's applications and portal statuses in that group (their personal pipeline goes with them; stats stay reconciled); their comments and activity rows remain as history.
 - `PATCH /api/groups/{gid}` `{name}` -> `Group`. Owner only (403 otherwise).
+- `POST /api/groups/{gid}/transfer-ownership` `{new_owner_id}` -> `GroupDetail`. Owner only (403 for a member, 404 for a non-member). 400 on yourself, 404 when the target is not a member of this group. One transaction moves `groups.owner_id` and both role rows; records `ownership_transferred`. See Phase G2.
 
 ### Companies (`routers/companies.py`)
 - `GET /api/groups/{gid}/companies?q=&tag=&status=&include_archived=false` -> `[Company]`. `q` matches name/location case-insensitive. `status` filter special values: any application status filters to companies where MY application has that status; `not_applied` = companies with no application row of mine. Sorted by updated_at desc.
@@ -416,7 +417,19 @@ Frontend:
 - Per-group **Members** view (route `/g/:gid/members`, linked from the sidebar or group header): everyone sees the roster (avatars, names, roles). The **owner** additionally sees: a visibility toggle + editable description, a **pending requests** list with Approve/Reject (and a count badge on the nav), **Remove** on each member, and a **Regenerate invite code** action with a confirm ("the old code stops working"). Non-owners see the roster read-only.
 - Honest microcopy, loading/empty/error states, tokens-only styling, no em-dash.
 
-Non-goals for G1 (parked): transfer ownership, co-owner/admin role, per-request messages, email notifications of requests. Owner-can't-leave-while-others-remain rule stays until transfer-ownership exists.
+Non-goals for G1 (parked): co-owner/admin role, per-request messages, email notifications of requests.
+
+### Phase G2 - Transfer ownership (added 2026-07-31)
+
+Why: an owner currently cannot leave a group that has other members, which is a dead end. Transfer is the unblock.
+
+Decisions (frozen): **immediate transfer, no acceptance step** (the recipient is already a trusted member; a pending-accept state machine is not worth it for a rare action) and **only to an existing member** of that group (never a pending requester, never by email). The action is irreversible by the old owner alone, so the UI puts it behind a strong confirm.
+
+- `POST /api/groups/{gid}/transfer-ownership` body `{new_owner_id: int}` -> returns the updated `GroupDetail`. Owner only (403 for a member, 404 for a non-member, same no-leak discipline). Errors: 400 transferring to yourself ("You already own this group."); 404 when `new_owner_id` is not a member of this group (do not leak whether the user exists at all). In ONE transaction: set `groups.owner_id = new_owner_id`, set the new owner's `group_members.role = 'owner'`, and demote the old owner's row to `'member'`. Records activity `ownership_transferred` with `detail = {"new_owner_id", "new_owner_name", "previous_owner_id", "previous_owner_name"}`.
+- The owner-cannot-leave-while-others-remain rule STAYS (transfer is the intended path out), but its 400 message becomes: "Transfer ownership to another member first, then you can leave."
+- Frontend: on the Members page, owner-only "Transfer ownership" control - a member picker (existing members except me) plus a ConfirmDialog: title "Transfer ownership to {name}?", body "{name} becomes the owner and you become a regular member. Only the new owner can transfer it back.", button "Transfer ownership". On success, invalidate the group so the demoted owner's controls disappear immediately. Frontend `ActivityType` gains `ownership_transferred` with the sentence "made {new_owner_name} the owner" (fallback "transferred ownership").
+
+Verifier focus for G2: only the owner can transfer (member 403, non-member 404); transfer to a non-member or to self is rejected; the swap is atomic (owner_id and BOTH role rows consistent, no window with two owners or none); after transfer the old owner has exactly member powers (no approve/remove/regenerate/transfer) and the new owner has full owner powers; the previously-blocked owner-leave now works after transferring; activity detail names both parties.
 
 Verifier focus for G1: private groups never appear in discover and 404 (not 403) for non-members on every route; only the owner can PATCH visibility/description, view/approve/reject requests, remove members, regenerate the code; request flow can't create duplicate pending rows or let a member re-request; remove-member cleans up that user's data like leave; regenerate-invite actually invalidates the old code; migration idempotent + non-destructive on populated SQLite AND Postgres (existing groups become private).
 

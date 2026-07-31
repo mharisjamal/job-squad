@@ -15,6 +15,7 @@ export type ActivityType =
   | "member_joined"
   | "member_removed"
   | "join_requested"
+  | "ownership_transferred"
   | "company_added"
   | "portal_added"
   | "application_status_changed"

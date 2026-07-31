@@ -68,10 +68,35 @@ async def require_member(session: AsyncSession, group_id: int, user: User) -> Gr
     return member
 
 
+def group_lock_statement(group_id: int):
+    """SELECT ... FOR UPDATE for one group row.
+
+    Ownership lives in three places that must move together (groups.owner_id
+    plus two group_members.role rows) and no DB constraint can express that,
+    so every writer of ownership or membership serializes on this row lock.
+    SQLAlchemy's SQLite dialect omits FOR UPDATE, so local/CI is unchanged.
+    """
+    return (
+        select(Group)
+        .where(Group.id == group_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
 async def get_group_for_member(
-    session: AsyncSession, group_id: int, user: User
+    session: AsyncSession, group_id: int, user: User, *, for_update: bool = False
 ) -> tuple[Group, GroupMember]:
-    group = await session.get(Group, group_id)
+    """Load a group the caller belongs to (404 otherwise, so nothing leaks).
+
+    `for_update=True` locks the group row first, so a handler that changes who
+    owns the group or who belongs to it tests its guards against state that no
+    concurrent writer can invalidate before it commits.
+    """
+    if for_update:
+        group = await session.scalar(group_lock_statement(group_id))
+    else:
+        group = await session.get(Group, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     member = await require_member(session, group_id, user)

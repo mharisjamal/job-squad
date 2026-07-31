@@ -191,6 +191,14 @@ class GroupPatchIn(BaseModel):
         return _clean_description(value)
 
 
+class GroupTransferOwnershipIn(BaseModel):
+    """Hand the group to an existing member. Immediate, no acceptance step."""
+
+    # Bounded to BIGINT: an out-of-range id is a 422 here rather than an
+    # asyncpg DataError 500 once it reaches the query on Postgres.
+    new_owner_id: int = Field(ge=1, le=2**63 - 1)
+
+
 class CompanyCreateIn(BaseModel):
     name: str = Field(max_length=NAME_MAX)
     website: str | None = Field(default=None, max_length=URL_MAX)

@@ -25,6 +25,7 @@ from ..schemas import (
     GroupCreateIn,
     GroupJoinIn,
     GroupPatchIn,
+    GroupTransferOwnershipIn,
     iso_z,
     serialize_group,
     serialize_group_member,
@@ -203,6 +204,25 @@ async def discover_groups(
     ]
 
 
+async def _group_detail_payload(session: AsyncSession, group: Group, user: User) -> dict:
+    """The GroupDetail wire shape, from the caller's perspective (the owner-only
+    pending_request_count is present only when `user` currently owns `group`)."""
+    rows = (
+        await session.execute(
+            select(GroupMember, User)
+            .join(User, User.id == GroupMember.user_id)
+            .where(GroupMember.group_id == group.id)
+            .order_by(GroupMember.joined_at)
+        )
+    ).all()
+    pending = (
+        await _pending_request_count(session, group.id) if group.owner_id == user.id else None
+    )
+    payload = serialize_group(group, member_count=len(rows), pending_request_count=pending)
+    payload["members"] = [serialize_group_member(m, u) for m, u in rows]
+    return payload
+
+
 @router.get("/groups/{gid}")
 async def group_detail(
     gid: int,
@@ -210,20 +230,7 @@ async def group_detail(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     group, _ = await get_group_for_member(session, gid, user)
-    rows = (
-        await session.execute(
-            select(GroupMember, User)
-            .join(User, User.id == GroupMember.user_id)
-            .where(GroupMember.group_id == gid)
-            .order_by(GroupMember.joined_at)
-        )
-    ).all()
-    pending = (
-        await _pending_request_count(session, gid) if group.owner_id == user.id else None
-    )
-    payload = serialize_group(group, member_count=len(rows), pending_request_count=pending)
-    payload["members"] = [serialize_group_member(m, u) for m, u in rows]
-    return payload
+    return await _group_detail_payload(session, group, user)
 
 
 @router.post("/groups/join")
@@ -435,7 +442,10 @@ async def remove_member(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    group, _ = await get_group_for_member(session, gid, user)
+    # Locked: the owner guard below must not run against an owner_id a
+    # concurrent transfer is about to change, or this could delete the incoming
+    # owner's membership and leave the group owned by a non-member.
+    group, _ = await get_group_for_member(session, gid, user, for_update=True)
     _require_owner(group, user, "remove members")
     if user_id == user.id:
         raise HTTPException(
@@ -486,13 +496,70 @@ async def remove_member(
     return {"ok": True}
 
 
+@router.post("/groups/{gid}/transfer-ownership")
+async def transfer_ownership(
+    gid: int,
+    body: GroupTransferOwnershipIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Hand the group to an existing member. Immediate, owner only, and
+    irreversible by the old owner (only the new owner can transfer it back)."""
+    # Locked before any ownership check: concurrent transfers would otherwise
+    # both pass _require_owner against the same stale owner_id and leave two
+    # owner rows behind, and a concurrent remove/leave could strip the incoming
+    # owner's membership. Every ownership writer serializes on this row.
+    group, my_member = await get_group_for_member(session, gid, user, for_update=True)
+    _require_owner(group, user, "transfer ownership")
+    new_owner_id = body.new_owner_id
+    if new_owner_id == user.id:
+        raise HTTPException(status_code=400, detail="You already own this group.")
+    # Read the target's membership under that lock, so a remove or leave that
+    # landed first is seen here as a plain 404 instead of orphaning the group.
+    target = await session.scalar(
+        select(GroupMember)
+        .where(GroupMember.group_id == gid, GroupMember.user_id == new_owner_id)
+        .execution_options(populate_existing=True)
+    )
+    new_owner = await session.get(User, new_owner_id) if target is not None else None
+    if target is None or new_owner is None:
+        # Same message whether the user is a non-member or does not exist at
+        # all: membership of this group must not leak who has an account.
+        raise HTTPException(status_code=404, detail="Member not found")
+    # One unit of work, one commit: owner_id and BOTH role rows move together,
+    # so no reader ever sees two owners or none.
+    group.owner_id = new_owner_id
+    target.role = "owner"
+    my_member.role = "member"
+    await record(
+        session,
+        request.app.state.broker,
+        group_id=gid,
+        user=user,
+        type_="ownership_transferred",
+        detail={
+            "new_owner_id": new_owner_id,
+            "new_owner_name": new_owner.display_name,
+            "previous_owner_id": user.id,
+            "previous_owner_name": user.display_name,
+        },
+    )
+    await session.commit()
+    # Serialized for the caller, who is now a plain member: the owner-only
+    # pending_request_count is therefore absent.
+    return await _group_detail_payload(session, group, user)
+
+
 @router.post("/groups/{gid}/leave")
 async def leave_group(
     gid: int,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    _, member = await get_group_for_member(session, gid, user)
+    # Locked like the other membership writers: leaving must not race a
+    # transfer that is handing this very group to the leaver.
+    group, member = await get_group_for_member(session, gid, user, for_update=True)
     others = int(
         await session.scalar(
             select(func.count())
@@ -509,9 +576,12 @@ async def leave_group(
                 "and group deletion is not supported yet."
             ),
         )
-    if member.role == "owner":
+    # groups.owner_id is the single source of truth for ownership; gating on
+    # the role column instead could trap a member whose row diverged from it.
+    if group.owner_id == user.id:
         raise HTTPException(
-            status_code=400, detail="Owner cannot leave while other members remain"
+            status_code=400,
+            detail="Transfer ownership to another member first, then you can leave.",
         )
     # The leaver's personal pipeline goes with them; shared data, their
     # comments and their activity rows stay (conversation history).

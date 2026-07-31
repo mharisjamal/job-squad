@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, RefreshCw, UserMinus, Users, X } from "lucide-react";
+import { ArrowRightLeft, Check, RefreshCw, UserMinus, Users, X } from "lucide-react";
 import clsx from "clsx";
 import { useGroupCtx } from "../components/layout/Shell";
 import { useAuth } from "../hooks/useAuth";
@@ -10,6 +10,7 @@ import {
   useRegenerateInvite,
   useRejectRequest,
   useRemoveMember,
+  useTransferOwnership,
 } from "../hooks/useGroupAdmin";
 import { useToast } from "../components/ui/Toast";
 import { ConfirmDialog } from "../components/ui/Dialog";
@@ -54,6 +55,7 @@ export default function Members() {
   const reject = useRejectRequest(gid);
   const removeMember = useRemoveMember(gid);
   const regenerate = useRegenerateInvite(gid);
+  const transfer = useTransferOwnership(gid);
 
   // Settings form (owner only).
   const [visibility, setVisibility] = useState<GroupVisibility>(group.visibility);
@@ -68,6 +70,18 @@ export default function Members() {
 
   const [removeTarget, setRemoveTarget] = useState<GroupMember | null>(null);
   const [regenOpen, setRegenOpen] = useState(false);
+
+  // Transfer ownership: everyone in the roster except me is a candidate.
+  const transferCandidates = group.members.filter((m) => m.user_id !== user?.id);
+  const [transferPick, setTransferPick] = useState("");
+  // The pick can go stale if that member leaves or is removed while the page is
+  // open, so the button reads the live roster before arming anything.
+  const transferPickMember =
+    transferCandidates.find((m) => String(m.user_id) === transferPick) ?? null;
+  // The dialog runs off a snapshot taken on click (same as removeTarget above).
+  // Deriving its open state from the pick would let a re-pick spring this
+  // destructive confirm open with no click, once the roster changed under it.
+  const [transferTarget, setTransferTarget] = useState<GroupMember | null>(null);
 
   const saveSettings = () => {
     updateGroup.mutate(
@@ -278,6 +292,40 @@ export default function Members() {
                 Anyone with this code joins instantly. Regenerate it to cut off an old share.
               </p>
             </div>
+
+            {/* Most destructive action in this card, so it sits last behind a stronger rule. */}
+            <div className="border-t-2 border-line-strong pt-5">
+              <span className="label">Transfer ownership</span>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <select
+                  className="input sm:w-64"
+                  value={transferPick}
+                  onChange={(e) => setTransferPick(e.target.value)}
+                  disabled={transferCandidates.length === 0 || transfer.isPending}
+                  aria-label="Member to make owner"
+                >
+                  <option value="">Choose a member</option>
+                  {transferCandidates.map((m) => (
+                    <option key={m.user_id} value={String(m.user_id)}>
+                      {m.display_name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn-ghost text-danger hover:bg-danger/10"
+                  onClick={() => setTransferTarget(transferPickMember)}
+                  disabled={transferPickMember == null || transfer.isPending}
+                >
+                  <ArrowRightLeft className="h-4 w-4" aria-hidden />
+                  {transfer.isPending ? "Transferring..." : "Transfer ownership"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-small text-muted">
+                {transferCandidates.length === 0
+                  ? "Invite someone first to transfer ownership."
+                  : "The member you pick becomes the owner right away and you drop to a regular member. Only they can hand it back."}
+              </p>
+            </div>
           </div>
         </section>
       )}
@@ -324,6 +372,38 @@ export default function Members() {
         message="The current code stops working immediately. You will get a new code to share."
         confirmLabel="Regenerate code"
         busy={regenerate.isPending}
+      />
+
+      <ConfirmDialog
+        open={transferTarget != null}
+        onClose={() => setTransferTarget(null)}
+        onConfirm={() => {
+          if (!transferTarget) return;
+          const target = transferTarget;
+          transfer.mutate(target.user_id, {
+            onSuccess: () => {
+              toast(`${target.display_name} is now the owner`);
+              setTransferTarget(null);
+              setTransferPick("");
+            },
+            onError: (err) => {
+              setTransferTarget(null);
+              toast(errMsg(err, "Couldn't transfer ownership. Retry."), "error");
+            },
+          });
+        }}
+        title={
+          transferTarget
+            ? `Transfer ownership to ${transferTarget.display_name}?`
+            : "Transfer ownership"
+        }
+        message={
+          transferTarget
+            ? `${transferTarget.display_name} becomes the owner and you become a regular member. Only the new owner can transfer it back.`
+            : ""
+        }
+        confirmLabel="Transfer ownership"
+        busy={transfer.isPending}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiSend } from "../lib/api";
-import type { Group, JoinRequest } from "../types/api";
+import type { Group, GroupDetail, JoinRequest } from "../types/api";
 
 /** Owner: pending join requests awaiting approval. Gate with `enabled` (owner only). */
 export function useGroupRequests(gid: number, enabled: boolean) {
@@ -55,6 +55,26 @@ export function useRemoveMember(gid: number) {
       void qc.invalidateQueries({ queryKey: ["companies", gid] });
       void qc.invalidateQueries({ queryKey: ["portals", gid] });
       void qc.invalidateQueries({ queryKey: ["stats", gid] });
+      void qc.invalidateQueries({ queryKey: ["activity", gid] });
+    },
+  });
+}
+
+/**
+ * Owner: hand the group to another member. Immediate and irreversible by the old
+ * owner: they are demoted to member in the same transaction. Invalidating the group
+ * makes the owner-only controls disappear as soon as the fresh owner_id lands.
+ */
+export function useTransferOwnership(gid: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (newOwnerId: number) =>
+      apiSend<GroupDetail>("POST", `/api/groups/${gid}/transfer-ownership`, {
+        new_owner_id: newOwnerId,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["group", gid] });
+      void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["activity", gid] });
     },
   });

@@ -68,7 +68,9 @@ async def test_leave_rules(client, register, make_group):
     # Owner cannot leave while another member remains.
     resp = await client.post(f"/api/groups/{group['id']}/leave", headers=owner["headers"])
     assert resp.status_code == 400
-    assert "Owner cannot leave" in resp.json()["detail"]
+    assert resp.json()["detail"] == (
+        "Transfer ownership to another member first, then you can leave."
+    )
 
     # A plain member can leave.
     resp = await client.post(f"/api/groups/{group['id']}/leave", headers=friend["headers"])

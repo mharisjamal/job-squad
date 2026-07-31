@@ -1,15 +1,44 @@
 """Phase G1 group management: visibility, discover, join requests, member
-removal, invite regeneration, and the visibility/description migration."""
+removal, invite regeneration, and the visibility/description migration.
+Phase G2 adds ownership transfer and the locking that keeps ownership sane."""
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.exc import IntegrityError
 
 from app.db import init_db, make_engine, make_sessionmaker
-from app.models import Group, GroupJoinRequest, User
+from app.deps import group_lock_statement
+from app.models import Group, GroupJoinRequest, GroupMember, User
+
+
+async def assert_group_ownership_consistent(asgi_app, gid: int) -> None:
+    """Ownership lives in three places that must agree: exactly one member row
+    holds role 'owner', groups.owner_id names that same user, and that user is
+    really a member. An owner who is not a member can neither administer the
+    group nor leave it, and group deletion is a non-goal, so that state would
+    be unrecoverable: every membership-mutating test asserts against it."""
+    async with asgi_app.state.sessionmaker() as session:
+        group = await session.get(Group, gid)
+        assert group is not None, f"group {gid} is gone"
+        owner_rows = (
+            await session.scalars(
+                select(GroupMember).where(
+                    GroupMember.group_id == gid, GroupMember.role == "owner"
+                )
+            )
+        ).all()
+        assert len(owner_rows) == 1, f"expected 1 owner role row, found {len(owner_rows)}"
+        assert owner_rows[0].user_id == group.owner_id, "owner_id and the owner row disagree"
+        owner_membership = await session.scalar(
+            select(GroupMember).where(
+                GroupMember.group_id == gid, GroupMember.user_id == group.owner_id
+            )
+        )
+        assert owner_membership is not None, "groups.owner_id is not a member of the group"
 
 
 async def _create_group(
@@ -291,7 +320,7 @@ async def test_list_requests_owner_only(client, register):
     ).status_code == 404
 
 
-async def test_approve_adds_member_then_reapprove_is_409(client, register):
+async def test_approve_adds_member_then_reapprove_is_409(client, register, asgi_app):
     owner = await register(username="haris")
     seeker = await register(username="ali")
     public = await _create_group(client, owner["headers"], name="Grads", visibility="public")
@@ -320,6 +349,7 @@ async def test_approve_adds_member_then_reapprove_is_409(client, register):
     # member_joined activity was recorded for the approval.
     acts = await client.get(f"/api/groups/{public['id']}/activity", headers=owner["headers"])
     assert "member_joined" in [a["type"] for a in acts.json()]
+    await assert_group_ownership_consistent(asgi_app, public["id"])
 
 
 async def test_cannot_decide_an_already_decided_request(client, register):
@@ -423,7 +453,7 @@ async def test_approve_request_from_another_group_404(client, register):
 
 
 async def test_remove_member_cleans_pipeline_keeps_comments(
-    client, register, make_group, make_company, make_portal
+    client, register, make_group, make_company, make_portal, asgi_app
 ):
     owner = await register(username="haris")
     friend = await register(username="ali")
@@ -478,6 +508,7 @@ async def test_remove_member_cleans_pipeline_keeps_comments(
         await client.get(f"/api/groups/{group['id']}/portals", headers=owner["headers"])
     ).json()
     assert portals[0]["statuses"] == []
+    await assert_group_ownership_consistent(asgi_app, group["id"])
 
 
 async def test_remove_member_cannot_target_self_or_unknown(client, register, make_group):
@@ -604,7 +635,7 @@ async def test_no_lockout_after_join_by_code_then_leave(client, register):
     assert resp.status_code == 200
 
 
-async def test_removed_member_can_request_again(client, register):
+async def test_removed_member_can_request_again(client, register, asgi_app):
     owner = await register(username="haris")
     seeker = await register(username="ali")
     public = await _create_group(client, owner["headers"], name="Grads", visibility="public")
@@ -624,6 +655,7 @@ async def test_removed_member_can_request_again(client, register):
     # Their join requests were cleared on removal, so they can request again.
     resp = await client.post(f"/api/groups/{public['id']}/request", headers=seeker["headers"])
     assert resp.status_code == 200
+    await assert_group_ownership_consistent(asgi_app, public["id"])
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +702,432 @@ async def test_partial_unique_blocks_second_pending_allows_decided(tmp_path):
         )
         assert count == 2
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Phase G2: transfer ownership
+# ---------------------------------------------------------------------------
+
+
+async def _join(client, group, headers):
+    resp = await client.post(
+        "/api/groups/join", json={"invite_code": group["invite_code"]}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _roles(detail: dict) -> dict[int, str]:
+    return {m["user_id"]: m["role"] for m in detail["members"]}
+
+
+async def test_transfer_ownership_swaps_owner_and_both_roles(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await _join(client, group, friend["headers"])
+
+    resp = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["owner_id"] == friend["user"]["id"]
+    roles = _roles(body)
+    assert roles[friend["user"]["id"]] == "owner"
+    assert roles[owner["user"]["id"]] == "member"
+    # Exactly one owner row in the group: never two, never none.
+    assert list(roles.values()).count("owner") == 1
+    # The caller is now a plain member, so the owner-only key is absent.
+    assert "pending_request_count" not in body
+
+    # The swap is durable, not just in the response.
+    fresh = (
+        await client.get(f"/api/groups/{group['id']}", headers=friend["headers"])
+    ).json()
+    assert fresh["owner_id"] == friend["user"]["id"]
+    assert _roles(fresh) == roles
+    assert fresh["pending_request_count"] == 0  # present again for the new owner
+    await assert_group_ownership_consistent(asgi_app, group["id"])
+
+
+async def test_after_transfer_owner_powers_move_to_the_new_owner(client, register, asgi_app):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    seeker = await register(username="sam")
+    group = await _create_group(client, owner["headers"], name="Grads", visibility="public")
+    await _join(client, group, friend["headers"])
+    gid = group["id"]
+    await client.post(f"/api/groups/{gid}/request", headers=seeker["headers"])
+    req_id = (
+        await client.get(f"/api/groups/{gid}/requests", headers=owner["headers"])
+    ).json()[0]["id"]
+
+    resp = await client.post(
+        f"/api/groups/{gid}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 200
+
+    # The demoted owner has exactly member powers now: every owner action 403s.
+    old = owner["headers"]
+    assert (
+        await client.get(f"/api/groups/{gid}/requests", headers=old)
+    ).status_code == 403
+    assert (
+        await client.post(f"/api/groups/{gid}/requests/{req_id}/approve", headers=old)
+    ).status_code == 403
+    assert (
+        await client.post(f"/api/groups/{gid}/requests/{req_id}/reject", headers=old)
+    ).status_code == 403
+    assert (
+        await client.delete(f"/api/groups/{gid}/members/{friend['user']['id']}", headers=old)
+    ).status_code == 403
+    assert (
+        await client.post(f"/api/groups/{gid}/regenerate-invite", headers=old)
+    ).status_code == 403
+    assert (
+        await client.patch(f"/api/groups/{gid}", json={"visibility": "private"}, headers=old)
+    ).status_code == 403
+    # Including transferring it back: only the new owner can do that.
+    assert (
+        await client.post(
+            f"/api/groups/{gid}/transfer-ownership",
+            json={"new_owner_id": owner["user"]["id"]},
+            headers=old,
+        )
+    ).status_code == 403
+
+    # The new owner has the full set.
+    new = friend["headers"]
+    assert (await client.get(f"/api/groups/{gid}/requests", headers=new)).status_code == 200
+    assert (
+        await client.post(f"/api/groups/{gid}/regenerate-invite", headers=new)
+    ).status_code == 200
+    assert (
+        await client.post(f"/api/groups/{gid}/requests/{req_id}/approve", headers=new)
+    ).status_code == 200
+    # And can transfer it back.
+    assert (
+        await client.post(
+            f"/api/groups/{gid}/transfer-ownership",
+            json={"new_owner_id": owner["user"]["id"]},
+            headers=new,
+        )
+    ).status_code == 200
+    await assert_group_ownership_consistent(asgi_app, gid)
+
+
+async def test_transfer_to_self_is_400(client, register, make_group, asgi_app):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await _join(client, group, friend["headers"])
+
+    resp = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": owner["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "You already own this group."
+    # Nothing moved.
+    detail = (await client.get(f"/api/groups/{group['id']}", headers=owner["headers"])).json()
+    assert detail["owner_id"] == owner["user"]["id"]
+    assert _roles(detail)[owner["user"]["id"]] == "owner"
+    await assert_group_ownership_consistent(asgi_app, group["id"])
+
+
+async def test_transfer_to_non_member_or_unknown_user_is_404(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    stranger = await register(username="sam")
+    group = await make_group(owner["headers"])
+
+    non_member = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": stranger["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert non_member.status_code == 404
+    nobody = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": 999999},
+        headers=owner["headers"],
+    )
+    assert nobody.status_code == 404
+    # Identical message: whether that account exists at all must not leak.
+    assert non_member.json()["detail"] == nobody.json()["detail"] == "Member not found"
+    await assert_group_ownership_consistent(asgi_app, group["id"])
+
+
+async def test_transfer_is_403_for_a_member_and_404_for_a_stranger(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    third = await register(username="sam")
+    stranger = await register(username="zoe")
+    group = await make_group(owner["headers"])
+    await _join(client, group, friend["headers"])
+    await _join(client, group, third["headers"])
+
+    # A member who is not the owner: 403 (they can see the group).
+    resp = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": third["user"]["id"]},
+        headers=friend["headers"],
+    )
+    assert resp.status_code == 403
+
+    # A non-member: 404, existence never leaks.
+    resp = await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=stranger["headers"],
+    )
+    assert resp.status_code == 404
+
+    # Neither attempt changed anything.
+    detail = (await client.get(f"/api/groups/{group['id']}", headers=owner["headers"])).json()
+    assert detail["owner_id"] == owner["user"]["id"]
+    assert list(_roles(detail).values()).count("owner") == 1
+    await assert_group_ownership_consistent(asgi_app, group["id"])
+
+
+async def test_blocked_owner_leave_works_after_transferring(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await _join(client, group, friend["headers"])
+    gid = group["id"]
+
+    blocked = await client.post(f"/api/groups/{gid}/leave", headers=owner["headers"])
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"] == (
+        "Transfer ownership to another member first, then you can leave."
+    )
+
+    resp = await client.post(
+        f"/api/groups/{gid}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 200
+
+    # The former owner is a regular member now, so the dead end is gone.
+    resp = await client.post(f"/api/groups/{gid}/leave", headers=owner["headers"])
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert (
+        await client.get(f"/api/groups/{gid}", headers=owner["headers"])
+    ).status_code == 404
+    detail = (await client.get(f"/api/groups/{gid}", headers=friend["headers"])).json()
+    assert detail["member_count"] == 1
+    assert _roles(detail) == {friend["user"]["id"]: "owner"}
+    await assert_group_ownership_consistent(asgi_app, gid)
+
+
+async def test_transfer_records_activity_naming_both_parties(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await _join(client, group, friend["headers"])
+    await client.post(
+        f"/api/groups/{group['id']}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+
+    acts = await client.get(f"/api/groups/{group['id']}/activity", headers=owner["headers"])
+    row = next(a for a in acts.json() if a["type"] == "ownership_transferred")
+    # Attributed to the transferring (old) owner.
+    assert row["username"] == "haris"
+    assert row["detail"] == {
+        "new_owner_id": friend["user"]["id"],
+        "new_owner_name": "Ali",
+        "previous_owner_id": owner["user"]["id"],
+        "previous_owner_name": "Haris",
+    }
+    await assert_group_ownership_consistent(asgi_app, group["id"])
+
+
+# ---------------------------------------------------------------------------
+# Phase G2 hardening: ownership writers serialize on the group row
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lock_spy(monkeypatch):
+    """Record how each handler asks for its group (locked or not)."""
+    from app.routers import groups as groups_router
+
+    real = groups_router.get_group_for_member
+    calls: list[bool] = []
+
+    async def _spy(session, group_id, user, *, for_update=False):
+        calls.append(for_update)
+        return await real(session, group_id, user, for_update=for_update)
+
+    monkeypatch.setattr(groups_router, "get_group_for_member", _spy)
+    return calls
+
+
+def test_group_lock_statement_emits_for_update_on_postgres():
+    """The lock is real on Postgres and a documented no-op on SQLite, which is
+    why dev and CI behavior does not change."""
+    pg = str(group_lock_statement(1).compile(dialect=postgresql.dialect())).upper()
+    assert "FOR UPDATE" in pg
+    lite = str(group_lock_statement(1).compile(dialect=sqlite.dialect())).upper()
+    assert "FOR UPDATE" not in lite
+
+
+async def test_ownership_writers_take_the_row_lock(client, register, make_group, lock_spy):
+    """Transfer, remove-member and leave must all read the group FOR UPDATE, so
+    they cannot interleave on a stale owner_id; read paths must not lock."""
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    third = await register(username="sam")
+    group = await make_group(owner["headers"])
+    gid = group["id"]
+    await _join(client, group, friend["headers"])
+    await _join(client, group, third["headers"])
+
+    lock_spy.clear()
+    resp = await client.post(
+        f"/api/groups/{gid}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 200
+    assert lock_spy == [True]
+
+    lock_spy.clear()
+    resp = await client.delete(
+        f"/api/groups/{gid}/members/{third['user']['id']}", headers=friend["headers"]
+    )
+    assert resp.status_code == 200
+    assert lock_spy == [True]
+
+    lock_spy.clear()
+    resp = await client.post(f"/api/groups/{gid}/leave", headers=owner["headers"])
+    assert resp.status_code == 200
+    assert lock_spy == [True]
+
+    # A plain read takes no lock.
+    lock_spy.clear()
+    assert (await client.get(f"/api/groups/{gid}", headers=friend["headers"])).status_code == 200
+    assert lock_spy == [False]
+
+
+async def test_transfer_to_a_member_removed_first_is_404(
+    client, register, make_group, asgi_app
+):
+    """The raced case, made deterministic: the target's membership is already
+    gone when the transfer runs its locked re-read. It must 404 rather than
+    hand the group to a non-member (an unrecoverable orphan)."""
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    gid = group["id"]
+    await _join(client, group, friend["headers"])
+
+    async with asgi_app.state.sessionmaker() as session:
+        await session.execute(
+            delete(GroupMember).where(
+                GroupMember.group_id == gid, GroupMember.user_id == friend["user"]["id"]
+            )
+        )
+        await session.commit()
+
+    resp = await client.post(
+        f"/api/groups/{gid}/transfer-ownership",
+        json={"new_owner_id": friend["user"]["id"]},
+        headers=owner["headers"],
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Member not found"
+    await assert_group_ownership_consistent(asgi_app, gid)
+    # The owner still owns the group and can still administer it.
+    assert (
+        await client.post(f"/api/groups/{gid}/regenerate-invite", headers=owner["headers"])
+    ).status_code == 200
+
+
+async def test_transfer_rejects_out_of_range_user_id(client, register, make_group):
+    """An id past BIGINT is a 422 here, not a driver-level 500 on Postgres."""
+    owner = await register(username="haris")
+    group = await make_group(owner["headers"])
+    for bad in (99999999999999999999, 0, -1):
+        resp = await client.post(
+            f"/api/groups/{group['id']}/transfer-ownership",
+            json={"new_owner_id": bad},
+            headers=owner["headers"],
+        )
+        assert resp.status_code == 422, bad
+
+
+async def test_leave_owner_and_last_member_messages_keep_their_order(
+    client, register, make_group, asgi_app
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    gid = group["id"]
+    await _join(client, group, friend["headers"])
+
+    blocked = await client.post(f"/api/groups/{gid}/leave", headers=owner["headers"])
+    assert blocked.status_code == 400
+    assert blocked.json()["detail"] == (
+        "Transfer ownership to another member first, then you can leave."
+    )
+
+    assert (
+        await client.post(f"/api/groups/{gid}/leave", headers=friend["headers"])
+    ).status_code == 200
+
+    # A sole owner hears about abandoning the group first, not about transfer:
+    # there is nobody left to transfer to.
+    alone = await client.post(f"/api/groups/{gid}/leave", headers=owner["headers"])
+    assert alone.status_code == 400
+    assert "last member" in alone.json()["detail"]
+    await assert_group_ownership_consistent(asgi_app, gid)
+
+
+async def test_leave_gates_on_owner_id_not_on_a_divergent_role_row(
+    client, register, make_group, asgi_app
+):
+    """groups.owner_id is the single source of truth. A member whose role row
+    says 'owner' (the shape a pre-lock race could leave behind) must not be
+    trapped: they are told to transfer, yet cannot, because they do not own it."""
+    owner = await register(username="haris")
+    friend = await register(username="ali")
+    group = await make_group(owner["headers"])
+    gid = group["id"]
+    await _join(client, group, friend["headers"])
+
+    async with asgi_app.state.sessionmaker() as session:
+        row = await session.scalar(
+            select(GroupMember).where(
+                GroupMember.group_id == gid, GroupMember.user_id == friend["user"]["id"]
+            )
+        )
+        row.role = "owner"
+        await session.commit()
+
+    resp = await client.post(f"/api/groups/{gid}/leave", headers=friend["headers"])
+    assert resp.status_code == 200
+    await assert_group_ownership_consistent(asgi_app, gid)
 
 
 # ---------------------------------------------------------------------------

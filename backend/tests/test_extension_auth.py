@@ -405,9 +405,11 @@ def test_extension_route_allowlist_is_exact():
     assert extension_route_allowed("POST", "/api/capture")
     assert extension_route_allowed("GET", "/api/capture/lookup")
     assert extension_route_allowed("POST", "/api/capture/lookup")
+    assert extension_route_allowed("POST", "/api/capture/lookup/batch")
     # A prefix is not a match, and the method matters.
     assert not extension_route_allowed("POST", "/api/groups")
     assert not extension_route_allowed("GET", "/api/groups/1")
     assert not extension_route_allowed("GET", "/api/capture")
     assert not extension_route_allowed("DELETE", "/api/capture")
+    assert not extension_route_allowed("GET", "/api/capture/lookup/batch")
     assert not extension_route_allowed("GET", "/api/groups/1/companies")

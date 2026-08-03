@@ -48,6 +48,11 @@ REGION_MAX = 60
 DESCRIPTION_MAX = 280
 TAGS_MAX_ITEMS = 20
 TagStr = Annotated[str, StringConstraints(max_length=50)]
+# One job-board results page's worth of company names per batched lookup.
+LOOKUP_BATCH_MAX = 50
+# One name in that batch: the same cap a single lookup puts on company_name, so
+# the two endpoints refuse exactly the same input.
+CompanyQueryStr = Annotated[str, StringConstraints(max_length=NAME_MAX)]
 
 GroupVisibility = Literal["private", "public"]
 
@@ -408,6 +413,24 @@ class CaptureLookupIn(BaseModel):
     @classmethod
     def _clean_optional(cls, value: str | None) -> str | None:
         return _blank_to_none(value)
+
+
+class CaptureLookupBatchIn(BaseModel):
+    """Body of the batched lookup (Phase E2): one job-board page's companies.
+
+    The badge script sends every company name it can see on the results page,
+    so this is called on every page and every SPA navigation. The cap keeps one
+    call to one page's worth of rows; past it the caller is not scanning a page
+    and gets a 422 rather than an unbounded scan.
+
+    Entries are echoed back verbatim, so nothing is trimmed or dropped here:
+    the router does that when it decides what to actually query.
+    """
+
+    group_id: int = Field(ge=1, le=2**63 - 1)
+    companies: list[CompanyQueryStr] = Field(
+        default_factory=list, max_length=LOOKUP_BATCH_MAX
+    )
 
 
 class CommentIn(BaseModel):

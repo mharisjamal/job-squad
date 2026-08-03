@@ -21,16 +21,19 @@ EXTENSION_TOUCH_INTERVAL = timedelta(hours=1)
 
 # An extension token sits on a browser profile for a year, which makes it the
 # most stealable credential the product issues. It is therefore scoped to
-# exactly what capture needs: list my groups, look a company up, save a posting.
-# It can NOT read a company, edit a group, regenerate an invite code, touch AI
-# settings or resumes, or mint another token, so a stolen one cannot be walked
-# up into an account takeover.
+# exactly what capture needs: list my groups, look companies up (one, or one
+# board page's worth), save a posting. It can NOT read a company, edit a group,
+# regenerate an invite code, touch AI settings or resumes, or mint another
+# token, so a stolen one cannot be walked up into an account takeover.
 EXTENSION_ALLOWED_ROUTES = frozenset(
     {
         ("GET", "/api/groups"),
         ("POST", "/api/capture"),
         ("GET", "/api/capture/lookup"),
         ("POST", "/api/capture/lookup"),
+        # Phase E2: the on-page squad badges. Reads no more than the single
+        # lookup already does, in one call instead of one per row.
+        ("POST", "/api/capture/lookup/batch"),
     }
 )
 

@@ -1,5 +1,6 @@
 """Browser-extension capture (Phase E1): POST /api/capture and
-GET /api/capture/lookup - dedupe, portal mapping, merge semantics, scoping."""
+GET /api/capture/lookup - dedupe, portal mapping, merge semantics, scoping.
+Plus the batched lookup behind the job-board badges (Phase E2)."""
 
 import pytest
 
@@ -9,13 +10,21 @@ from app.capture import (
     portal_name_for_domain,
     registrable_domain,
 )
-from app.schemas import JD_TEXT_MAX
+from app.schemas import JD_TEXT_MAX, LOOKUP_BATCH_MAX
 
 LINKEDIN_POSTING = "https://www.linkedin.com/jobs/view/4012345678/"
 
 
 async def _capture(client, headers, **body):
     return await client.post("/api/capture", json=body, headers=headers)
+
+
+async def _batch(client, headers, group_id, companies):
+    return await client.post(
+        "/api/capture/lookup/batch",
+        json={"group_id": group_id, "companies": companies},
+        headers=headers,
+    )
 
 
 async def _join(client, headers, group):
@@ -777,3 +786,328 @@ async def test_post_lookup_keeps_the_url_out_of_the_query_string(
     assert resp.status_code == 200
     assert resp.request.url.query == b""
     assert "secret-job" not in str(resp.request.url)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/capture/lookup/batch (E2): one job-board page per call
+# ---------------------------------------------------------------------------
+
+
+async def test_batch_answers_every_query_once_and_in_order(
+    client, register, make_group, make_company
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    known = await make_company(account["headers"], group["id"], name="TechCorp")
+    asked = ["Nobody Ltd", "TechCorp", "Also Nobody"]
+
+    resp = await _batch(client, account["headers"], group["id"], asked)
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert [row["query"] for row in results] == asked
+    assert set(results[0]) == {
+        "query",
+        "company_id",
+        "company_name",
+        "my_status",
+        "squad",
+    }
+    assert results[0] == {
+        "query": "Nobody Ltd",
+        "company_id": None,
+        "company_name": None,
+        "my_status": None,
+        "squad": [],
+    }
+    assert results[1]["company_id"] == known["id"]
+    assert results[1]["company_name"] == "TechCorp"
+    # A known company nobody has applied to yet still answers with nulls where
+    # there is no standing to report.
+    assert results[1]["my_status"] is None
+    assert results[1]["squad"] == []
+    assert results[2]["company_id"] is None
+
+
+async def test_batch_uses_the_same_normalized_matching_as_the_single_lookup(
+    client, register, make_group, make_company
+):
+    """A board writes "Vercel, Inc."; the squad saved "Vercel"."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="Vercel")
+
+    spellings = ["Vercel, Inc.", "  vercel  ", "VERCEL Ltd", "Ver cel"]
+    results = (
+        await _batch(client, account["headers"], group["id"], spellings)
+    ).json()["results"]
+    assert [row["company_id"] for row in results] == [
+        company["id"],
+        company["id"],
+        company["id"],
+        None,
+    ]
+    # The stored name comes back, not the caller's spelling.
+    assert results[0]["company_name"] == "Vercel"
+    assert results[0]["query"] == "Vercel, Inc."
+
+    single = await client.post(
+        "/api/capture/lookup",
+        json={"group_id": group["id"], "company_name": "Vercel, Inc."},
+        headers=account["headers"],
+    )
+    assert {k: v for k, v in results[0].items() if k != "query"} == single.json()
+
+
+async def test_batch_reports_the_squad_and_excludes_me(
+    client, register, make_group, make_company
+):
+    owner = await register(username="haris")
+    friend = await register(username="ali", display_name="Ali")
+    group = await make_group(owner["headers"])
+    await _join(client, friend["headers"], group)
+    techcorp = await make_company(owner["headers"], group["id"], name="TechCorp")
+    vercel = await make_company(owner["headers"], group["id"], name="Vercel")
+    for company_id, headers, status in (
+        (techcorp["id"], owner["headers"], "applied"),
+        (techcorp["id"], friend["headers"], "rejected"),
+        (vercel["id"], friend["headers"], "interview"),
+    ):
+        resp = await client.put(
+            f"/api/companies/{company_id}/application",
+            json={"status": status},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    results = (
+        await _batch(client, owner["headers"], group["id"], ["TechCorp", "Vercel"])
+    ).json()["results"]
+    assert results[0]["my_status"] == "applied"
+    assert results[0]["squad"] == [{"display_name": "Ali", "status": "rejected"}]
+    # A company only the squad has touched: no status of mine, still a chip.
+    assert results[1]["my_status"] is None
+    assert results[1]["squad"] == [{"display_name": "Ali", "status": "interview"}]
+
+    # The friend sees the mirror image, so nobody is ever listed as their own
+    # squad mate.
+    mirrored = (
+        await _batch(client, friend["headers"], group["id"], ["TechCorp"])
+    ).json()["results"]
+    assert mirrored[0]["my_status"] == "rejected"
+    assert mirrored[0]["squad"] == [{"display_name": "Haris", "status": "applied"}]
+
+
+async def test_batch_blank_entries_are_unresolved_but_keep_their_place(
+    client, register, make_group, make_company
+):
+    """Blanks are never queried, yet they still answer.
+
+    The badge script pairs results to scanned rows by position, so an entry it
+    could not read must come back as an unresolved slot rather than shift every
+    later answer onto the wrong job.
+    """
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    asked = ["", "   ", "TechCorp", "\t\n", "- ,.", "Nobody"]
+
+    results = (await _batch(client, account["headers"], group["id"], asked)).json()[
+        "results"
+    ]
+    assert [row["query"] for row in results] == asked
+    assert [row["company_id"] for row in results] == [
+        None,
+        None,
+        company["id"],
+        None,
+        None,
+        None,
+    ]
+    assert all(row["squad"] == [] for row in results if row["company_id"] is None)
+
+
+async def test_batch_of_only_blanks_answers_without_a_lookup(
+    client, register, make_group, make_company
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    await make_company(account["headers"], group["id"], name="TechCorp")
+    results = (await _batch(client, account["headers"], group["id"], ["", " "])).json()
+    assert results == {
+        "results": [
+            {
+                "query": "",
+                "company_id": None,
+                "company_name": None,
+                "my_status": None,
+                "squad": [],
+            },
+            {
+                "query": " ",
+                "company_id": None,
+                "company_name": None,
+                "my_status": None,
+                "squad": [],
+            },
+        ]
+    }
+
+
+async def test_batch_with_no_companies_is_an_empty_result(client, register, make_group):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    resp = await _batch(client, account["headers"], group["id"], [])
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"results": []}
+
+
+async def test_batch_repeats_are_deduped_but_still_all_answered(
+    client, register, make_group, make_company
+):
+    """Boards repeat the same employer down a page; every row still gets its
+    own answer, spelled the way that row spelled it."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "applied"},
+        headers=account["headers"],
+    )
+    asked = ["TechCorp", "techcorp", "TechCorp Inc.", "TechCorp"]
+
+    results = (await _batch(client, account["headers"], group["id"], asked)).json()[
+        "results"
+    ]
+    assert len(results) == len(asked)
+    assert [row["query"] for row in results] == asked
+    assert {row["company_id"] for row in results} == {company["id"]}
+    assert {row["my_status"] for row in results} == {"applied"}
+
+
+async def test_batch_over_the_cap_is_422_and_at_the_cap_is_accepted(
+    client, register, make_group
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    names = [f"Company {index}" for index in range(LOOKUP_BATCH_MAX + 1)]
+
+    resp = await _batch(client, account["headers"], group["id"], names)
+    assert resp.status_code == 422
+    resp = await _batch(client, account["headers"], group["id"], names[:-1])
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["results"]) == LOOKUP_BATCH_MAX
+
+
+async def test_batch_name_over_the_single_lookup_cap_is_422(
+    client, register, make_group
+):
+    """One name is capped exactly as company_name is on the single lookup."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    resp = await _batch(client, account["headers"], group["id"], ["x" * 121])
+    assert resp.status_code == 422
+    resp = await _batch(client, account["headers"], group["id"], ["x" * 120])
+    assert resp.status_code == 200, resp.text
+
+
+async def test_batch_for_a_non_member_is_404(client, register, make_group, make_company):
+    """Identical no-leak behavior to the single lookup: a stranger cannot read
+    a squad's companies, one at a time or fifty at a time."""
+    owner = await register(username="haris")
+    outsider = await register(username="ali")
+    group = await make_group(owner["headers"])
+    await make_company(owner["headers"], group["id"], name="TechCorp")
+
+    resp = await _batch(client, outsider["headers"], group["id"], ["TechCorp"])
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Group not found"
+    # An unknown group is the same 404, so membership never leaks either.
+    resp = await _batch(client, outsider["headers"], 999_999, ["TechCorp"])
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Group not found"
+
+
+async def test_batch_needs_auth_and_a_group_id(client, register, make_group):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    resp = await client.post(
+        "/api/capture/lookup/batch",
+        json={"group_id": group["id"], "companies": ["TechCorp"]},
+    )
+    assert resp.status_code == 401
+    resp = await client.post(
+        "/api/capture/lookup/batch",
+        json={"companies": ["TechCorp"]},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 422
+
+
+async def test_batch_works_with_both_token_kinds(
+    client, register, make_group, make_company
+):
+    """The badges run from the extension, so its own credential must reach this
+    route; the session token keeps working exactly as before."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    paired = (
+        await client.post("/api/auth/extension-token", headers=account["headers"])
+    ).json()
+    extension_headers = {"Authorization": f"Bearer {paired['token']}"}
+
+    from_extension = await _batch(client, extension_headers, group["id"], ["TechCorp"])
+    assert from_extension.status_code == 200, from_extension.text
+    assert from_extension.json()["results"][0]["company_id"] == company["id"]
+
+    from_session = await _batch(client, account["headers"], group["id"], ["TechCorp"])
+    assert from_session.status_code == 200, from_session.text
+    assert from_session.json() == from_extension.json()
+
+
+async def test_batch_query_count_does_not_scale_with_companies(
+    client, register, make_group, make_company, asgi_app
+):
+    """The badge script calls this on every board page and every SPA
+    navigation, so 25 companies must cost the same statements as one: the
+    resolution is one indexed read of the group's companies and the standings
+    are one read over all matched ids, never one query per name."""
+    from sqlalchemy import event
+
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    names = [f"Company {index}" for index in range(25)]
+    for name in names:
+        company = await make_company(account["headers"], group["id"], name=name)
+        await client.put(
+            f"/api/companies/{company['id']}/application",
+            json={"status": "applied"},
+            headers=account["headers"],
+        )
+
+    statements: list[str] = []
+
+    def _record(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement)
+
+    sync_engine = asgi_app.state.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        counts = []
+        for asked in (names[:1], names):
+            statements.clear()
+            resp = await _batch(client, account["headers"], group["id"], asked)
+            assert resp.status_code == 200, resp.text
+            results = resp.json()["results"]
+            assert len(results) == len(asked)
+            assert all(row["my_status"] == "applied" for row in results)
+            counts.append(len(statements))
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert counts[0] == counts[1], statements
+    # Four, flat: the caller's user row, the membership check, the group's
+    # companies, the standings for every matched company. A generous ceiling so
+    # this fails on a new per-name query, not on an extra unrelated read.
+    assert counts[1] <= 5, statements

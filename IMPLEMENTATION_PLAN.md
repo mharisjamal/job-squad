@@ -485,8 +485,27 @@ Capture surfaces the role title, which had nowhere to live (applications tracked
 ### Verifier focus for E1
 Pairing message validated on origin+source+shape (a hostile page must not be able to hand the extension a token, and a hostile page must not be able to read it); extension token revocation actually blocks use; extension tokens rejected on the token-management routes; `/api/capture` cannot write into a group the caller is not a member of (404) and cannot create duplicate companies on repeat capture of the same posting; jd_text respects the 50k cap; lookup leaks nothing for non-members; `activeTab`/`scripting` used instead of broad host permissions; no secrets logged; no em-dash.
 
-### Parked (E2/E3)
-E2: squad-awareness badges injected into LinkedIn/Indeed result lists (the multiplayer differentiator), quick status updates from the popup. E3: application-submission detection, periodic re-check of whether a saved posting is still live. Explicitly out: ATS autofill (a maintenance treadmill and effectively a separate product), email parsing.
+### Phase E2 - squad awareness on job boards (added 2026-07-31)
+
+The multiplayer differentiator: your squad's memory appears where the decision is made (the job board), not in a separate app you must remember to open.
+
+**Permission model (frozen, non-negotiable):** job-board access is **opt-in via `optional_host_permissions`**, never in the install-time manifest. The extension ships requesting nothing beyond E1; turning badges on in the popup triggers `chrome.permissions.request` for the boards, and turning it off calls `chrome.permissions.remove`. Rationale: "read your data on LinkedIn" at install is a privacy downgrade and a store-review magnet for a feature many users will not use.
+
+- Optional origins: `https://*.linkedin.com/*`, `https://*.indeed.com/*`. Content script registered dynamically (`chrome.scripting.registerContentScripts`) only while the permission is held, and unregistered on revoke.
+- Badge script: scans the results list, extracts each row's company name, batches them to the API, and injects one small chip per row showing the squad's standing ("Ali - rejected", "You - applied"). Rows with nothing known get no chip (silence is the default; never clutter). Re-scans on DOM mutation (boards are SPAs) with a debounce, and marks processed rows so it never double-injects. Injected DOM uses textContent only, is namespaced with a `jobsquad-` class prefix, and never blocks or alters the page.
+- Backend: `POST /api/capture/lookup/batch` body `{group_id, companies: [string]}` (max 50 per call, dedup server-side) -> `{results: [{query, company_id|null, company_name|null, my_status|null, squad:[{display_name,status}]}]}`. Member-only, 404 for a non-member, same normalized-name matching as `/api/capture/lookup`. Added to the extension-token allowlist.
+- Popup gains a "Show squad status on job boards" toggle reflecting the live permission state.
+
+### Phase E3 - submit detection (added 2026-07-31)
+
+After you actually submit an application, the extension offers to move that company to Applied, so the board stays true with no effort.
+
+- Same **optional permission** model, separate toggle: optional origins `https://*.greenhouse.io/*`, `https://*.lever.co/*`, `https://*.myworkdayjobs.com/*`.
+- Detection is conservative and never automatic: watch for a submit-confirmation signal (a known success URL fragment or a confirmation heading such as "Application submitted" / "Thank you for applying"). On a hit, show a small in-page prompt (not a silent write) offering "Mark {company} as applied in JobSquad". Only on click does it call `POST /api/capture` with `status: "applied"`. If the company is unknown to the group it captures it as well.
+- Never touches form fields, never submits anything, never reads entered values. Explicitly still out of scope: ATS autofill (a permanent per-site maintenance treadmill and effectively a separate product) and email parsing.
+
+### E1 correction: right-click on a link
+Chrome's `activeTab` does not extend to a tab the extension itself opened, so the "open the link then extract" path cannot read the page. Make it honest instead of broken: right-clicking a link captures with the URL prefilled and clearly states that only the link was read, pointing at Ctrl+Shift+J on the opened page for full extraction. README updated to match.
 
 ## 10. Non-goals (v1)
 

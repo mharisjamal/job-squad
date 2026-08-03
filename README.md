@@ -57,6 +57,20 @@ Your own pipeline is a board. Drag a card and the status is saved for you alone.
 - A live activity feed: "Ali moved TechCorp to Interview" appears for everyone as it happens
 - A dashboard with your numbers, a squad comparison, and the list of companies your friends posted that you have not applied to yet
 
+**Stop retyping things**
+- A **browser extension** captures the job posting you are looking at (toolbar button or Ctrl+Shift+J): company, role, location, link and the description, all editable before it saves. See [extension/README.md](extension/README.md)
+- Opt-in **squad badges on job boards**: browsing LinkedIn or Indeed, the results your squad already knows are marked ("Ali - rejected") before you spend an evening applying
+- Opt-in **submit detection**: after you actually send an application on Greenhouse, Lever or Workday, it offers to move that company to Applied
+
+**Resumes that fit the job**
+- A **resume vault**: keep versions (PDF, DOCX or LaTeX), attach one to each application, and see which version actually gets interviews
+- A **match report**: paste or capture a job description and see which of its skills your resume already covers and which are genuine gaps, framed honestly (adding a skill you do not have is how modern ATS flags you)
+- **AI tailoring** with your own free key (Gemini, Groq, or any OpenAI-compatible endpoint): rewrite suggestions built only from what your resume already says, never invented experience. LaTeX resumes get a full edited document back
+
+**Run the squad**
+- Groups are **private by default**, or public and listed in a **discover** directory where people **request to join** and the owner approves or rejects
+- Owner controls: remove a member, regenerate the invite code if it leaks, and transfer ownership
+
 **Own your data**
 - CSV export for applications, companies, and portals, any time
 - Everything lives in one database file you can copy
@@ -124,13 +138,17 @@ Backend tests: `uv run pytest` in `backend/`. Frontend checks: `npm run typechec
 
 ## Security, honestly
 
-Group data is only ever visible to that group's members, and a request for another group's data returns a plain "not found" rather than confirming it exists. Passwords are hashed with PBKDF2 at 250,000 iterations. Login attempts are rate limited. CSV exports neutralise spreadsheet formula injection. Session tokens returned from social sign-in travel in the URL fragment, so they never reach a server log.
+Group data is only ever visible to that group's members, and a request for another group's data returns a plain "not found" rather than confirming it exists. Private groups never appear in discovery. Passwords are hashed with PBKDF2 at 250,000 iterations. Login attempts are rate limited. CSV exports neutralise spreadsheet formula injection. Session tokens returned from social sign-in travel in the URL fragment, so they never reach a server log.
+
+Your AI key is encrypted at rest, is never returned by the API, and the endpoint it gets sent to is treated as a credential destination: it must be https (except on localhost), and moving it requires re-entering the key, so a stolen session cannot redirect your key to someone else's server.
+
+The browser extension holds a **scoped** token, not a session: it can list your groups and capture jobs, and nothing else. It cannot read your companies, change settings, or mint another token. Revoke it any time from the app, and it stops working on the next request. Job-board access is optional and only requested when you switch that feature on.
 
 The honest caveat: with no email or OAuth configured, anyone who can reach the URL can register. That is fine on your Wi-Fi and wrong on the open internet, which is why verification exists and why turning it on is a single environment variable.
 
 ## Roadmap
 
-Not built yet, on purpose: password reset, push and email notifications, removing members or deleting groups, avatar uploads, and multiple squads sharing a company pool.
+Not built yet, on purpose: password reset, push and email notifications, deleting groups, avatar uploads, co-owner roles, and multiple squads sharing a company pool. Deliberately never: autofilling ATS application forms (a permanent per-site maintenance treadmill) and reading your email.
 
 ## License
 

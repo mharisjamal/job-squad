@@ -68,6 +68,16 @@ export default function SettingsAi() {
       (provider === "custom" && baseUrl.trim() !== saved.base_url) ||
       key.trim().length > 0);
 
+  /**
+   * The server refuses to move the base URL while reusing the stored key: a
+   * stolen session could otherwise repoint the endpoint and have the server
+   * hand the key to it. Switching provider counts too, because each preset
+   * carries its own base URL. Mirror the rule so nobody meets a raw 422.
+   */
+  const keyRequired =
+    saved != null && (provider !== saved.provider || baseUrl.trim() !== (saved.base_url ?? ""));
+  const keyMissing = keyRequired && key.trim().length === 0;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (model.trim().length === 0) {
@@ -78,6 +88,10 @@ export default function SettingsAi() {
       setFormError("Base URL is required for a custom provider.");
       return;
     }
+    if (keyMissing) {
+      setFormError("Enter your API key to change the provider or base URL.");
+      return;
+    }
     setFormError(null);
     setTestResult(null);
     const payload: AiSettingsPut = { provider, model: model.trim() };
@@ -86,6 +100,8 @@ export default function SettingsAi() {
     if (key.trim().length > 0) payload.key = key.trim();
     save.mutate(payload, {
       onSuccess: () => toast("AI settings saved"),
+      // ApiError.message is the server's own detail text, so a 422 the guard
+      // above did not anticipate still reaches the user verbatim.
       onError: (err) => setFormError(errMsg(err, "Couldn't save AI settings. Retry.")),
     });
   };
@@ -174,12 +190,19 @@ export default function SettingsAi() {
                 placeholder="Paste your key - it is stored encrypted"
                 autoComplete="off"
                 spellCheck={false}
+                aria-required={keyRequired}
               />
-              {keySaved && (
-                <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
-                  <ShieldCheck className="h-3 w-3 text-status-offer-text" aria-hidden />
-                  A key is saved. Leave this blank to keep it.
+              {keyRequired ? (
+                <p className="mt-1 text-[11px] text-muted">
+                  Changing the provider or base URL requires re-entering your API key.
                 </p>
+              ) : (
+                keySaved && (
+                  <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
+                    <ShieldCheck className="h-3 w-3 text-status-offer-text" aria-hidden />
+                    A key is saved. Leave this blank to keep it.
+                  </p>
+                )
               )}
             </div>
 
@@ -213,7 +236,7 @@ export default function SettingsAi() {
               />
               <p className="mt-1 text-[11px] text-muted">
                 {provider === "custom"
-                  ? "Any OpenAI-compatible endpoint works."
+                  ? "Any OpenAI-compatible endpoint works. It must use https unless it runs on localhost."
                   : "Set automatically for this provider."}
               </p>
             </div>
@@ -233,7 +256,11 @@ export default function SettingsAi() {
             )}
 
             <div className="flex flex-wrap items-center gap-2">
-              <button type="submit" className="btn-primary" disabled={save.isPending}>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={save.isPending || keyMissing}
+              >
                 {save.isPending ? "Saving..." : "Save"}
               </button>
               <button

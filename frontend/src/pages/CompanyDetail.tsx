@@ -57,6 +57,9 @@ function errMsg(err: unknown, fallback: string): string {
 const JD_MAX = 50000;
 const JD_NOTE_FROM = 45000;
 
+// Server cap for the role title (plan 9d, E1 addendum).
+const JOB_TITLE_MAX = 200;
+
 /** External-link chip; falls back to plain text when the URL is not http(s). */
 function LinkChip({ icon: Icon, label, url }: { icon: typeof Globe; label: string; url: string }) {
   const href = safeHref(url);
@@ -166,6 +169,7 @@ function MyApplicationEditor({
   const { toast } = useToast();
 
   const [status, setStatus] = useState<ApplicationStatus>("saved");
+  const [jobTitle, setJobTitle] = useState("");
   const [appliedAt, setAppliedAt] = useState("");
   const [followUpAt, setFollowUpAt] = useState("");
   const [portalId, setPortalId] = useState("");
@@ -195,6 +199,7 @@ function MyApplicationEditor({
   // Sync the form whenever my server-side row changes identity or version.
   useEffect(() => {
     setStatus(mine?.status ?? "saved");
+    setJobTitle(mine?.job_title ?? "");
     setAppliedAt(mine?.applied_at ?? "");
     setFollowUpAt(mine?.follow_up_at ?? "");
     setPortalId(mine?.applied_via_portal_id != null ? String(mine.applied_via_portal_id) : "");
@@ -223,6 +228,7 @@ function MyApplicationEditor({
         cid,
         payload: {
           status,
+          job_title: jobTitle.trim() || null,
           applied_via_portal_id: portalId ? Number(portalId) : null,
           applied_at: appliedAt || null,
           follow_up_at: followUpAt || null,
@@ -246,6 +252,22 @@ function MyApplicationEditor({
         My application
       </h2>
       <form onSubmit={save} className="space-y-4">
+        <div>
+          <label htmlFor="app-job-title" className="label">
+            Role
+          </label>
+          <input
+            id="app-job-title"
+            className="input"
+            value={jobTitle}
+            onChange={(e) => setJobTitle(e.target.value)}
+            placeholder="Senior Backend Engineer"
+            maxLength={JOB_TITLE_MAX}
+          />
+          <p className="mt-1 text-[11px] text-muted/90">
+            The role you applied for. Leave blank if it is not decided yet.
+          </p>
+        </div>
         <div>
           <label htmlFor="app-status" className="label">
             Status
@@ -634,6 +656,11 @@ export default function CompanyDetail() {
                             <span className="ml-1.5 text-xs font-normal text-muted">(you)</span>
                           )}
                         </span>
+                        {a.job_title && (
+                          <span className="block truncate text-xs text-muted" title={a.job_title}>
+                            {a.job_title}
+                          </span>
+                        )}
                         <span className="block font-mono text-[11px] text-muted">
                           updated {timeAgo(a.updated_at)}
                         </span>

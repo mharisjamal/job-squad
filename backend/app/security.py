@@ -100,6 +100,44 @@ def make_token(user_id: int, secret: str, ttl_hours: int) -> str:
     return jwt_encode(payload, secret)
 
 
+# ---------------------------------------------------------------------------
+# Browser-extension tokens (Phase E1)
+#
+# A second token KIND, distinguished by the "typ" claim that session tokens
+# deliberately do not carry. The jti is the handle the database row is found by,
+# so a token can be revoked; the token itself is never stored.
+# ---------------------------------------------------------------------------
+
+EXTENSION_TOKEN_TYPE = "ext"
+EXTENSION_TOKEN_TTL_DAYS = 365
+_JTI_BYTES = 16
+
+
+def generate_jti() -> str:
+    """A crypto-random token id: the revocation handle stored in the database."""
+    return secrets.token_hex(_JTI_BYTES)
+
+
+def make_extension_token(
+    user_id: int, secret: str, jti: str, ttl_days: int = EXTENSION_TOKEN_TTL_DAYS
+) -> str:
+    """Mint an extension JWT: {sub, exp, typ:"ext", jti}.
+
+    Long-lived by design (the extension cannot re-run a login flow), which is
+    exactly why it is revocable through its jti and is refused on the routes
+    that mint or manage extension tokens.
+    """
+    return jwt_encode(
+        {
+            "sub": str(user_id),
+            "exp": int(time.time()) + ttl_days * 86400,
+            "typ": EXTENSION_TOKEN_TYPE,
+            "jti": jti,
+        },
+        secret,
+    )
+
+
 OTP_DIGITS = 6
 
 

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JobSquad</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="mark" aria-hidden="true"></span><span>JobSquad</span></div>
+      <span id="env-label" class="env"></span>
+    </header>
+
+    <main id="root">
+      <section id="view-loading" class="view">
+        <p class="muted" id="loading-text">Reading this page</p>
+      </section>
+
+      <section id="view-unpaired" class="view" hidden>
+        <h1 class="h">Connect this extension</h1>
+        <p class="muted">
+          Open JobSquad in your browser, sign in, then connect once. After that you can capture any
+          job posting from the toolbar button or with Ctrl+Shift+J.
+        </p>
+        <button id="connect-btn" class="primary" type="button">Connect to JobSquad</button>
+        <div class="settings">
+          <label class="label" for="api-base">JobSquad server</label>
+          <select id="api-base" class="input">
+            <option value="https://jobsquad.dpdns.org">jobsquad.dpdns.org (production)</option>
+            <option value="http://localhost:8100">localhost:8100 (local development)</option>
+          </select>
+        </div>
+        <p id="unpaired-error" class="error" hidden></p>
+      </section>
+
+      <section id="view-capture" class="view" hidden>
+        <p id="lookup-line" class="known" hidden></p>
+        <form id="capture-form" novalidate>
+          <div class="field">
+            <label class="label" for="f-company">Company</label>
+            <input
+              id="f-company"
+              class="input"
+              type="text"
+              maxlength="120"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field">
+            <label class="label" for="f-title">Job title</label>
+            <input id="f-title" class="input" type="text" autocomplete="off" />
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label class="label" for="f-location">Location</label>
+              <input id="f-location" class="input" type="text" maxlength="120" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label class="label" for="f-status">
+                Status <span id="status-dot" class="dot" aria-hidden="true"></span>
+              </label>
+              <select id="f-status" class="input"></select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="f-url">Posting URL</label>
+            <input
+              id="f-url"
+              class="input"
+              type="text"
+              maxlength="2000"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field">
+            <label class="label" for="f-group">Group</label>
+            <select id="f-group" class="input"></select>
+          </div>
+
+          <div id="jd-block" class="jd-block" hidden>
+            <div class="jd-head">
+              <label class="check" for="f-include-jd">
+                <input id="f-include-jd" type="checkbox" />
+                <span>Include job description</span>
+              </label>
+              <button id="jd-toggle" class="link" type="button" aria-expanded="false">Show</button>
+            </div>
+            <p id="jd-line" class="jd"></p>
+            <textarea id="f-jd" class="input jd-text" rows="8" spellcheck="false" hidden></textarea>
+            <p class="note">Your squad can read this.</p>
+          </div>
+
+          <p id="capture-note" class="note" hidden></p>
+          <p id="capture-error" class="error" hidden></p>
+
+          <button id="save-btn" class="primary" type="submit">Save to JobSquad</button>
+        </form>
+      </section>
+
+      <section id="view-done" class="view" hidden>
+        <p id="done-text" class="done"></p>
+      </section>
+
+      <section id="view-expired" class="view" hidden>
+        <h1 class="h">Your connection expired. Connect again.</h1>
+        <p class="muted">
+          Your extension token is no longer valid. It may have been revoked from the JobSquad
+          settings page.
+        </p>
+        <button id="reconnect-btn" class="primary" type="button">Connect to JobSquad</button>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="footer-host" class="muted"></span>
+      <button id="disconnect-btn" class="link" type="button" hidden>Disconnect</button>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "JobSquad",
+  "version": "0.1.0",
+  "description": "Capture a job posting into your JobSquad group in one click. You always confirm before anything is saved.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://jobsquad.dpdns.org/*",
+    "http://localhost:8100/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Capture this job",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://jobsquad.dpdns.org/connect",
+        "https://jobsquad.dpdns.org/connect?*",
+        "http://localhost:8100/connect",
+        "http://localhost:8100/connect?*"
+      ],
+      "js": [
+        "content/connect.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "capture-job": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+J",
+        "mac": "Command+Shift+J"
+      },
+      "description": "Capture this job"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}

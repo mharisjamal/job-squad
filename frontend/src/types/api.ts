@@ -97,6 +97,8 @@ export interface ApplicationBrief {
   username: string;
   display_name: string;
   status: ApplicationStatus;
+  /** Role applied for at this company (plan 9d, E1 addendum). Null when unknown. */
+  job_title: string | null;
   applied_at: string | null;
   updated_at: string;
   resume_id: number | null;
@@ -111,6 +113,8 @@ export interface ApplicationFull {
   username: string;
   display_name: string;
   status: ApplicationStatus;
+  /** Role applied for at this company (plan 9d, E1 addendum). Null when unknown. */
+  job_title: string | null;
   applied_via_portal_id: number | null;
   applied_via_portal_name: string | null;
   applied_at: string | null;
@@ -313,6 +317,8 @@ export interface CompanyPatch extends Partial<CompanyPayload> {
 
 export interface ApplicationUpsert {
   status: ApplicationStatus;
+  /** Role applied for (<=200 chars); merge semantics, null clears, blank -> null. */
+  job_title?: string | null;
   applied_via_portal_id?: number | null;
   applied_at?: string | null;
   follow_up_at?: string | null;
@@ -437,4 +443,28 @@ export type TailorResult = TailorTexResult | TailorAdviceResult;
 
 export interface ShareLink {
   url: string;
+}
+
+// Browser extension pairing (plan section 9d, Phase E1)
+
+/**
+ * GET /api/auth/extension-tokens. One row per paired browser. The token value
+ * itself is never returned here, only the fact that a pairing exists.
+ */
+export interface ExtensionToken {
+  id: number;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/**
+ * POST /api/auth/extension-token. The token comes back ONCE and only ever
+ * travels to the extension through postMessage: it is never rendered, logged,
+ * or put in a URL.
+ */
+export interface ExtensionTokenCreated {
+  token: string;
+  id: number;
+  created_at: string;
 }

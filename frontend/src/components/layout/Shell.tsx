@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu as MenuIcon,
   Moon,
+  Puzzle,
   Repeat,
   Sparkles,
   Sun,
@@ -279,6 +280,15 @@ export function GroupShell() {
                         >
                           <Sparkles className="h-4 w-4 text-muted" aria-hidden />
                           AI settings
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            close();
+                            navigate("/connect");
+                          }}
+                        >
+                          <Puzzle className="h-4 w-4 text-muted" aria-hidden />
+                          Browser extension
                         </MenuItem>
                         <MenuItem
                           onClick={() => {

@@ -268,3 +268,161 @@ async def test_list_filters_user_and_status(client, register, make_group, make_c
         headers=owner["headers"],
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# job_title (Phase E1 addendum): the role, not just the company
+# ---------------------------------------------------------------------------
+
+
+async def test_job_title_set_preserved_and_cleared(
+    client, register, make_group, make_company
+):
+    """Merge semantics on job_title: omitted leaves it, explicit null clears."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    url = f"/api/companies/{company['id']}/application"
+
+    resp = await client.put(
+        url,
+        json={"status": "applied", "job_title": "  Senior Backend Engineer  "},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    # Stored trimmed.
+    assert resp.json()["job_title"] == "Senior Backend Engineer"
+
+    # Omitted: unchanged.
+    resp = await client.put(url, json={"status": "interview"}, headers=account["headers"])
+    assert resp.json()["job_title"] == "Senior Backend Engineer"
+
+    # Explicit null: cleared.
+    resp = await client.put(
+        url, json={"status": "interview", "job_title": None}, headers=account["headers"]
+    )
+    assert resp.json()["job_title"] is None
+
+
+async def test_blank_job_title_becomes_null(client, register, make_group, make_company):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "applied", "job_title": "   "},
+        headers=account["headers"],
+    )
+    assert resp.status_code == 200
+    assert resp.json()["job_title"] is None
+
+
+async def test_job_title_over_200_is_422(client, register, make_group, make_company):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    url = f"/api/companies/{company['id']}/application"
+    resp = await client.put(
+        url, json={"status": "applied", "job_title": "x" * 201}, headers=account["headers"]
+    )
+    assert resp.status_code == 422
+    resp = await client.put(
+        url, json={"status": "applied", "job_title": "x" * 200}, headers=account["headers"]
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_new_application_has_a_null_job_title(
+    client, register, make_group, make_company
+):
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    resp = await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "saved"},
+        headers=account["headers"],
+    )
+    assert resp.json()["job_title"] is None
+
+
+async def test_job_title_rides_both_application_shapes(
+    client, register, make_group, make_company
+):
+    """ApplicationFull (application list, company detail) and ApplicationBrief
+    (the company list's squad row) both carry the role."""
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    company = await make_company(account["headers"], group["id"], name="TechCorp")
+    await client.put(
+        f"/api/companies/{company['id']}/application",
+        json={"status": "applied", "job_title": "Data Engineer"},
+        headers=account["headers"],
+    )
+
+    rows = (
+        await client.get(
+            f"/api/groups/{group['id']}/applications", headers=account["headers"]
+        )
+    ).json()
+    assert rows[0]["job_title"] == "Data Engineer"
+
+    detail = (
+        await client.get(f"/api/companies/{company['id']}", headers=account["headers"])
+    ).json()
+    assert detail["applications"][0]["job_title"] == "Data Engineer"
+
+    listing = (
+        await client.get(
+            f"/api/groups/{group['id']}/companies", headers=account["headers"]
+        )
+    ).json()
+    brief = listing[0]["applications"][0]
+    assert brief["job_title"] == "Data Engineer"
+    # The brief stays a brief: it gained one column, not the whole row.
+    assert "jd_text" not in brief
+
+
+async def test_list_reads_do_not_scale_their_query_count_with_rows(
+    client, register, make_group, make_company, asgi_app
+):
+    """job_title is a plain column on the row, so it rides the existing joins.
+
+    Guard against a future N+1: the company list and the application list must
+    issue the same number of SQL statements for four companies as for one.
+    """
+    from sqlalchemy import event
+
+    account = await register(username="haris")
+    group = await make_group(account["headers"])
+    statements: list[str] = []
+
+    def _record(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement)
+
+    sync_engine = asgi_app.state.engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _record)
+    try:
+        counts = []
+        for index in range(4):
+            company = await make_company(
+                account["headers"], group["id"], name=f"Company {index}"
+            )
+            await client.put(
+                f"/api/companies/{company['id']}/application",
+                json={"status": "applied", "job_title": f"Engineer {index}"},
+                headers=account["headers"],
+            )
+            if index in (0, 3):
+                statements.clear()
+                await client.get(
+                    f"/api/groups/{group['id']}/companies", headers=account["headers"]
+                )
+                await client.get(
+                    f"/api/groups/{group['id']}/applications", headers=account["headers"]
+                )
+                counts.append(len(statements))
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", _record)
+
+    assert counts[0] == counts[1], statements

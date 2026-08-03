@@ -16,6 +16,7 @@ from .routers import (
     activity,
     applications,
     auth,
+    capture,
     comments,
     companies,
     export,
@@ -41,6 +42,7 @@ _ROUTERS = (
     activity.router,
     stats.router,
     export.router,
+    capture.router,
 )
 
 MAX_REQUEST_BODY_BYTES = 1_000_000
@@ -100,6 +102,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        """Refuse to be framed, on every response.
+
+        /connect mints a 365-day extension credential on one click, which is
+        exactly the kind of button clickjacking targets. Nothing in this app is
+        ever meant to be embedded in a frame (the SPA links to the shared PDF
+        rather than framing it), so the strictest pair costs nothing. setdefault
+        so a route that ever needs its own policy can still set one.
+        """
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        return response
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next):

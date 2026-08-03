@@ -6,7 +6,9 @@ secret) and is NEVER returned to the client or logged: reads report only
 model; the model stays user-editable.
 """
 
-from fastapi import APIRouter, Depends, Request
+from urllib.parse import urlsplit
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import ai
@@ -16,6 +18,45 @@ from ..schemas import AISettingsPutIn
 from ..security import decrypt_secret, encrypt_secret
 
 router = APIRouter(tags=["settings"])
+
+# ---------------------------------------------------------------------------
+# base_url is a CREDENTIAL DESTINATION, not a cosmetic setting: the stored key
+# is sent to it as "Authorization: Bearer <key>". Two rules follow.
+#
+# 1. https only, except loopback. A key must never travel in plaintext to a
+#    remote host; a local model server on http://localhost stays usable.
+# 2. Repointing the URL requires re-entering the key. Otherwise anyone holding
+#    a token could point the victim's saved key at their own server and press
+#    "Test" to receive it (a blank key deliberately keeps the stored one). This
+#    is also the honest UX: a Gemini key is useless against Groq, so a genuine
+#    provider switch always comes with that provider's key.
+# ---------------------------------------------------------------------------
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+BASE_URL_KEY_REQUIRED = "Re-enter your API key when you change the provider or base URL."
+
+
+def base_url_problem(base_url: str | None) -> str | None:
+    """A user-facing reason this base URL may not be saved, or None when it is
+    fine. An empty URL is not a problem here: nothing is ever sent to it (the
+    client refuses to call without one)."""
+    if not base_url or not base_url.strip():
+        return None
+    parts = urlsplit(base_url.strip())
+    if parts.scheme not in ("https", "http"):
+        return "The base URL must start with https://."
+    host = (parts.hostname or "").lower()
+    if not host:
+        return "The base URL must include a host, for example https://api.groq.com/openai/v1."
+    if parts.scheme == "http" and host not in _LOOPBACK_HOSTS:
+        return "The base URL must use https:// (http:// is allowed only for localhost)."
+    return None
+
+
+def _same_endpoint(left: str | None, right: str | None) -> bool:
+    """Compare two base URLs the way the client uses them (trailing / ignored)."""
+    return (left or "").strip().rstrip("/") == (right or "").strip().rstrip("/")
 
 # OpenAI-compatible presets. `custom` supplies its own base_url + model.
 AI_PRESETS: dict[str, dict[str, str]] = {
@@ -77,6 +118,20 @@ async def put_ai_settings(
 
     base_url = _resolve("base_url", body.base_url)
     model = _resolve("model", body.model)
+
+    problem = base_url_problem(base_url)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    supplied_key = bool(body.key and body.key.strip())
+    # Only a STORED key can be redirected, so that is exactly when the re-entry
+    # is demanded; a first-time save has no secret to protect.
+    if (
+        settings is not None
+        and settings.key_encrypted
+        and not supplied_key
+        and not _same_endpoint(base_url, settings.base_url)
+    ):
+        raise HTTPException(status_code=422, detail=BASE_URL_KEY_REQUIRED)
 
     if settings is None:
         settings = UserAISettings(user_id=user.id)

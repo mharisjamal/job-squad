@@ -12,10 +12,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..deps import get_current_user, get_session
+from ..deps import get_current_user, get_session, require_session_user
 from ..identity import derive_username
 from ..mailer import MailError, send_otp_email
-from ..models import PendingRegistration, User, UserIdentity, utcnow
+from ..models import ExtensionToken, PendingRegistration, User, UserIdentity, utcnow
 from ..oauth import (
     PROVIDERS,
     OAuthError,
@@ -25,16 +25,21 @@ from ..oauth import (
     fetch_profile,
 )
 from ..schemas import (
+    ExtensionTokenCreateIn,
     LoginIn,
     RegisterIn,
     RegisterStartIn,
     RegisterVerifyIn,
+    iso_z,
+    serialize_extension_token,
     serialize_user,
 )
 from ..security import (
+    generate_jti,
     generate_otp,
     hash_otp,
     hash_password,
+    make_extension_token,
     make_pkce_verifier,
     make_state_token,
     make_token,
@@ -311,6 +316,81 @@ async def login(
 @router.get("/auth/me")
 async def me(user: User = Depends(get_current_user)) -> dict:
     return serialize_user(user)
+
+
+# ---------------------------------------------------------------------------
+# Browser-extension tokens (Phase E1)
+#
+# All three routes depend on require_session_user, so an extension token is
+# refused here (401) even though it authenticates everywhere else: a stolen
+# extension token must not be able to mint more tokens or revoke the user's
+# others. Only a browser session, which came from a real login, can.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/auth/extension-token")
+async def create_extension_token(
+    request: Request,
+    body: ExtensionTokenCreateIn | None = None,
+    user: User = Depends(require_session_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Mint a pairing token for the browser extension.
+
+    The token is returned ONCE and never again: only its jti is stored, so
+    there is nothing left to leak from the database or a later list call.
+    """
+    jti = generate_jti()
+    row = ExtensionToken(
+        user_id=user.id, jti=jti, label=body.label if body is not None else None
+    )
+    session.add(row)
+    await session.commit()
+    token = make_extension_token(user.id, request.app.state.settings.secret, jti)
+    return {
+        "token": token,
+        "id": row.id,
+        "label": row.label,
+        "created_at": iso_z(row.created_at),
+    }
+
+
+@router.get("/auth/extension-tokens")
+async def list_extension_tokens(
+    user: User = Depends(require_session_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """My paired extensions, newest first. Revoked rows are not listed."""
+    rows = (
+        await session.scalars(
+            select(ExtensionToken)
+            .where(
+                ExtensionToken.user_id == user.id,
+                ExtensionToken.revoked.is_(False),
+            )
+            .order_by(ExtensionToken.created_at.desc(), ExtensionToken.id.desc())
+        )
+    ).all()
+    return [serialize_extension_token(row) for row in rows]
+
+
+@router.delete("/auth/extension-tokens/{token_id}")
+async def revoke_extension_token(
+    token_id: int,
+    user: User = Depends(require_session_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Revoke one of MY tokens. Someone else's id is a 404, never a 403, so the
+    route cannot be used to probe which token ids exist."""
+    row = await session.get(ExtensionToken, token_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Extension token not found")
+    # The row is kept (flagged) rather than deleted, so a revoked jti can never
+    # be handed back out by a later insert reusing the id.
+    if not row.revoked:
+        row.revoked = True
+        await session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,12 @@ function CardBody({ app }: { app: ApplicationFull }) {
   return (
     <>
       <p className="text-sm font-medium leading-snug text-ink">{app.company_name}</p>
+      {app.job_title && (
+        // One quiet line, clipped rather than wrapped so cards stay uniform.
+        <p className="mt-0.5 truncate text-[11px] text-muted" title={app.job_title}>
+          {app.job_title}
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {app.applied_at && (
           <span className="font-mono text-[10px] text-muted">{formatDate(app.applied_at)}</span>

@@ -85,6 +85,27 @@ class PendingRegistration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ExtensionToken(Base):
+    """A long-lived browser-extension credential (Phase E1).
+
+    The JWT itself is never stored: the row holds only its `jti`, so a token can
+    be listed and revoked without the credential ever living in the database.
+    `last_used_at` is bumped at most hourly, so normal extension traffic does not
+    turn every read into a write.
+    """
+
+    __tablename__ = "extension_tokens"
+    __table_args__ = (Index("ix_extension_tokens_user_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    jti: Mapped[str] = mapped_column(String(64), unique=True)
+    label: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Group(Base):
     __tablename__ = "groups"
 
@@ -273,6 +294,10 @@ class Application(Base):
     follow_up_at: Mapped[date | None] = mapped_column(Date)
     url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # The ROLE applied for (Phase E1 addendum). An application tracks a company
+    # and now the job as well, so "which role did I apply for there" is
+    # answerable. Trimmed and capped at 200 chars by the schema layer.
+    job_title: Mapped[str | None] = mapped_column(Text)
     # Pasted job description for the deterministic skills match report (R2).
     jd_text: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

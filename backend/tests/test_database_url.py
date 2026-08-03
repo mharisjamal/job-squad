@@ -531,3 +531,131 @@ def test_settings_port_follows_render_port(monkeypatch):
     monkeypatch.setenv("JOBSQUAD_SECRET", "x")
     monkeypatch.setenv("PORT", "10000")
     assert Settings.load().port == 10000
+
+
+# ---------------------------------------------------------------------------
+# job_title migration (Phase E1 addendum). This ships to the live Neon DB, so
+# both dialects are covered: the real ALTER on a populated SQLite table, and the
+# emitted statement on the Postgres branch.
+# ---------------------------------------------------------------------------
+
+
+async def test_sqlite_migration_adds_job_title_without_losing_rows(tmp_path):
+    """A pre-addendum applications table (real rows, no job_title) survives:
+    the column appears and every existing row keeps its data."""
+    engine = make_engine(tmp_path / "pre_job_title.db")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE applications ("
+                " id INTEGER NOT NULL PRIMARY KEY,"
+                " company_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " status VARCHAR(20) NOT NULL,"
+                " applied_via_portal_id INTEGER,"
+                " resume_id BIGINT,"
+                " applied_at DATE,"
+                " follow_up_at DATE,"
+                " url TEXT,"
+                " notes TEXT,"
+                " jd_text TEXT,"
+                " created_at DATETIME,"
+                " updated_at DATETIME,"
+                " UNIQUE (company_id, user_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO applications"
+                " (id, company_id, user_id, status, notes, jd_text)"
+                " VALUES (1, 1, 1, 'applied', 'CV v3', 'Python and SQL'),"
+                " (2, 1, 2, 'offer', NULL, NULL)"
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        info = (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        assert "job_title" in {row[1] for row in info}
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT id, status, notes, jd_text, job_title"
+                    " FROM applications ORDER BY id"
+                )
+            )
+        ).all()
+        assert rows == [
+            (1, "applied", "CV v3", "Python and SQL", None),
+            (2, "offer", None, None, None),
+        ]
+    await engine.dispose()
+
+
+async def test_sqlite_job_title_migration_is_idempotent(tmp_path):
+    """Every boot re-runs init_db: the second pass is a no-op that neither
+    fails nor duplicates the column, and existing rows are untouched."""
+    engine = make_engine(tmp_path / "job_title_twice.db")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE applications ("
+                " id INTEGER NOT NULL PRIMARY KEY,"
+                " company_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " status VARCHAR(20) NOT NULL,"
+                " notes TEXT,"
+                " created_at DATETIME,"
+                " updated_at DATETIME,"
+                " UNIQUE (company_id, user_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO applications (id, company_id, user_id, status)"
+                " VALUES (1, 1, 1, 'applied'), (2, 1, 2, 'offer')"
+            )
+        )
+
+    # First boot adds the column; the app then writes a real title into it.
+    await init_db(engine)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE applications SET job_title = 'Data Engineer' WHERE id = 1")
+        )
+
+    # Second boot must change nothing at all.
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(applications)"))).all()
+        ]
+        assert columns.count("job_title") == 1
+        rows = (
+            await conn.execute(
+                text("SELECT id, status, job_title FROM applications ORDER BY id")
+            )
+        ).all()
+        assert rows == [(1, "applied", "Data Engineer"), (2, "offer", None)]
+    await engine.dispose()
+
+
+async def test_postgres_migration_emits_job_title_statement(monkeypatch):
+    """The postgresql branch adds job_title idempotently; sqlite does not use
+    the IF NOT EXISTS form (it goes through the PRAGMA-guarded block)."""
+
+    async def _no_sqlite_migrate(_engine):
+        pass
+
+    monkeypatch.setattr("app.db._migrate", _no_sqlite_migrate)
+
+    pg = _FakeEngine("postgresql")
+    await init_db(pg)
+    joined = "\n".join(pg.log)
+    assert "ALTER TABLE applications ADD COLUMN IF NOT EXISTS job_title TEXT" in joined
+
+    lite = _FakeEngine("sqlite")
+    await init_db(lite)
+    assert "IF NOT EXISTS job_title" not in "\n".join(lite.log)

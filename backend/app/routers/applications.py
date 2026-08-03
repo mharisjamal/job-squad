@@ -71,7 +71,7 @@ async def upsert_application(
         # on an existing row and defaults to null on create.
         for field in (
             "status", "applied_via_portal_id", "resume_id",
-            "applied_at", "follow_up_at", "url", "notes", "jd_text",
+            "applied_at", "follow_up_at", "url", "notes", "job_title", "jd_text",
         ):
             if field in provided:
                 setattr(row, field, provided[field])

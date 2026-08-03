@@ -6,13 +6,38 @@ group the caller is not a member of returns 404, so existence never leaks.
 """
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Company, Group, GroupMember, Portal, User
-from .security import jwt_decode
+from .models import Company, ExtensionToken, Group, GroupMember, Portal, User, utcnow
+from .security import EXTENSION_TOKEN_TYPE, jwt_decode
+
+# An extension calls the API constantly; recording every call would turn each
+# read into a write. One bump per hour is enough for a "last used" column.
+EXTENSION_TOUCH_INTERVAL = timedelta(hours=1)
+
+# An extension token sits on a browser profile for a year, which makes it the
+# most stealable credential the product issues. It is therefore scoped to
+# exactly what capture needs: list my groups, look a company up, save a posting.
+# It can NOT read a company, edit a group, regenerate an invite code, touch AI
+# settings or resumes, or mint another token, so a stolen one cannot be walked
+# up into an account takeover.
+EXTENSION_ALLOWED_ROUTES = frozenset(
+    {
+        ("GET", "/api/groups"),
+        ("POST", "/api/capture"),
+        ("GET", "/api/capture/lookup"),
+        ("POST", "/api/capture/lookup"),
+    }
+)
+
+
+def extension_route_allowed(method: str, path: str) -> bool:
+    """Exact method+path match, tolerating an optional trailing slash."""
+    return (method.upper(), path.rstrip("/") or "/") in EXTENSION_ALLOWED_ROUTES
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -38,6 +63,26 @@ def _extract_token(request: Request) -> str | None:
     return None
 
 
+async def _authorize_extension_token(
+    session: AsyncSession, payload: dict, user: User
+) -> None:
+    """An extension token is only good while its row exists and is not revoked.
+
+    Revocation therefore takes effect on the very next request, even though the
+    JWT itself stays signature-valid for its whole 365-day life.
+    """
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    row = await session.scalar(select(ExtensionToken).where(ExtensionToken.jti == jti))
+    if row is None or row.revoked or row.user_id != user.id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    now = utcnow()
+    if row.last_used_at is None or now - row.last_used_at >= EXTENSION_TOUCH_INTERVAL:
+        row.last_used_at = now
+        await session.commit()
+
+
 async def get_current_user(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> User:
@@ -51,9 +96,41 @@ async def get_current_user(
         user_id = int(payload.get("sub", ""))
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired token") from None
+    # Session tokens carry no "typ" claim and behave exactly as before. Any
+    # value other than the one kind we mint is refused rather than guessed at.
+    kind = payload.get("typ")
+    if kind is not None and kind != EXTENSION_TOKEN_TYPE:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if kind == EXTENSION_TOKEN_TYPE:
+        await _authorize_extension_token(session, payload, user)
+        if not extension_route_allowed(request.method, request.url.path):
+            raise HTTPException(
+                status_code=401, detail="This token cannot be used on this endpoint"
+            )
+    # Routes that must refuse extension tokens read this flag (see
+    # require_session_user); anything else treats both kinds alike.
+    request.state.extension_token = kind == EXTENSION_TOKEN_TYPE
+    return user
+
+
+def is_extension_request(request: Request) -> bool:
+    """True when the authenticated caller presented an extension token."""
+    return bool(getattr(request.state, "extension_token", False))
+
+
+async def require_session_user(
+    request: Request, user: User = Depends(get_current_user)
+) -> User:
+    """Lateral-movement guard: a stolen extension token cannot mint or manage
+    extension tokens, so it is refused on those routes even though it is a
+    valid credential everywhere else."""
+    if is_extension_request(request):
+        raise HTTPException(
+            status_code=401, detail="Sign in to the app to manage extension tokens"
+        )
     return user
 
 

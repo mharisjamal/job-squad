@@ -17,6 +17,7 @@ from .models import (
     Application,
     Comment,
     Company,
+    ExtensionToken,
     Group,
     GroupJoinRequest,
     GroupMember,
@@ -38,6 +39,9 @@ NOTES_MAX = 10000
 # A pasted job description is far longer than a note; capped so the match
 # report and the DB column stay bounded (422 past this).
 JD_TEXT_MAX = 50000
+# The role applied for, e.g. "Senior Backend Engineer (Remote)". Long enough for
+# the padded titles job boards emit, short enough to stay a title.
+JOB_TITLE_MAX = 200
 # A portal's market label, e.g. "Middle East", "USA", "Global".
 REGION_MAX = 60
 # A group's discover-directory blurb.
@@ -102,6 +106,13 @@ def _normalize_email_value(value: str) -> str:
     if len(value) > 320 or not _EMAIL_RE.fullmatch(value):
         raise ValueError("enter a valid email address")
     return value
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    """Trim an optional free-text field; blank means "no value", not "blank"."""
+    if value is None:
+        return None
+    return value.strip() or None
 
 
 def _clean_region(value: str | None) -> str | None:
@@ -234,7 +245,14 @@ class ApplicationPutIn(BaseModel):
     follow_up_at: date | None = None
     url: str | None = Field(default=None, max_length=URL_MAX)
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
+    job_title: str | None = Field(default=None, max_length=JOB_TITLE_MAX)
     jd_text: str | None = Field(default=None, max_length=JD_TEXT_MAX)
+
+    @field_validator("job_title")
+    @classmethod
+    def _clean_job_title(cls, value: str | None) -> str | None:
+        # Trimmed, and a blank string clears the column rather than storing "".
+        return _blank_to_none(value)
 
 
 RESUME_LABEL_MAX = 80
@@ -324,6 +342,74 @@ class PortalStatusPutIn(BaseModel):
     notes: str | None = Field(default=None, max_length=NOTES_MAX)
 
 
+# A user-facing name for one paired browser ("Chrome on the work laptop").
+EXTENSION_LABEL_MAX = 80
+
+
+class ExtensionTokenCreateIn(BaseModel):
+    """Optional body for the pairing POST. The whole body may be omitted."""
+
+    label: str | None = Field(default=None, max_length=EXTENSION_LABEL_MAX)
+
+    @field_validator("label")
+    @classmethod
+    def _clean_label(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
+
+
+class CaptureIn(BaseModel):
+    """One captured job posting from the browser extension (Phase E1).
+
+    Everything but the group and the company name is optional: the extension
+    sends whatever the page yielded, and the user has already reviewed it.
+    """
+
+    # Bounded to BIGINT so an out-of-range id is a 422 here rather than an
+    # asyncpg DataError 500 once it reaches the query on Postgres.
+    group_id: int = Field(ge=1, le=2**63 - 1)
+    company_name: str = Field(max_length=NAME_MAX)
+    company_website: str | None = Field(default=None, max_length=URL_MAX)
+    careers_url: str | None = Field(default=None, max_length=URL_MAX)
+    location: str | None = Field(default=None, max_length=NAME_MAX)
+    posting_url: str | None = Field(default=None, max_length=URL_MAX)
+    job_title: str | None = Field(default=None, max_length=JOB_TITLE_MAX)
+    jd_text: str | None = Field(default=None, max_length=JD_TEXT_MAX)
+    status: ApplicationStatus | None = None
+
+    @field_validator("company_name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("company_name must not be blank")
+        return value
+
+    @field_validator(
+        "company_website", "careers_url", "location", "posting_url", "job_title", "jd_text"
+    )
+    @classmethod
+    def _clean_optional(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
+
+
+class CaptureLookupIn(BaseModel):
+    """Body form of the capture lookup.
+
+    The page a user is browsing is private. In a query string it would land in
+    the hosted deployment's access log, so the POST form carries it in the body
+    instead. Identical behavior and identical authz to the GET.
+    """
+
+    group_id: int = Field(ge=1, le=2**63 - 1)
+    url: str | None = Field(default=None, max_length=URL_MAX)
+    company_name: str | None = Field(default=None, max_length=NAME_MAX)
+
+    @field_validator("url", "company_name")
+    @classmethod
+    def _clean_optional(cls, value: str | None) -> str | None:
+        return _blank_to_none(value)
+
+
 class CommentIn(BaseModel):
     body: str = Field(max_length=NOTES_MAX)
 
@@ -360,6 +446,17 @@ def serialize_user(user: User) -> dict:
         "display_name": user.display_name,
         "email": user.email,
         "avatar_url": user.avatar_url,
+    }
+
+
+def serialize_extension_token(row: ExtensionToken) -> dict:
+    """List shape for a paired extension. The token itself is never included:
+    it is shown once at creation and is not recoverable afterwards."""
+    return {
+        "id": row.id,
+        "label": row.label,
+        "created_at": iso_z(row.created_at),
+        "last_used_at": iso_z(row.last_used_at),
     }
 
 
@@ -414,6 +511,7 @@ def serialize_application_brief(
         "username": user.username,
         "display_name": user.display_name,
         "status": row.status,
+        "job_title": row.job_title,
         "applied_at": iso_date(row.applied_at),
         "resume_id": row.resume_id,
         "resume_label": resume_label,
@@ -436,6 +534,7 @@ def serialize_application_full(
         "username": user.username,
         "display_name": user.display_name,
         "status": row.status,
+        "job_title": row.job_title,
         "applied_via_portal_id": row.applied_via_portal_id,
         "applied_via_portal_name": portal_name,
         "resume_id": row.resume_id,

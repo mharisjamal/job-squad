@@ -136,6 +136,11 @@ async def _migrate_postgres(conn) -> None:
     await conn.execute(
         text("ALTER TABLE applications ADD COLUMN IF NOT EXISTS jd_text TEXT")
     )
+    # Phase E1 addendum: the role applied for. Nullable with no default, so the
+    # live Neon rows keep every value they have and simply gain an empty column.
+    await conn.execute(
+        text("ALTER TABLE applications ADD COLUMN IF NOT EXISTS job_title TEXT")
+    )
     # The portal market/region column. IF NOT EXISTS keeps this boot-safe
     # against the live database (which has real portal rows) once present.
     await conn.execute(
@@ -159,6 +164,8 @@ async def _migrate_postgres(conn) -> None:
     # Phase R3 adds two brand-new tables (user_ai_settings, resume_shares) and
     # NO new columns on existing tables, so create_all provisions them on both
     # dialects and there is nothing to ALTER here. Listed for the reader.
+    # Phase E1 (extension_tokens) is the same case: one new table, no column
+    # change on any existing table, so create_all covers both dialects.
 
 
 async def _migrate(engine: AsyncEngine) -> None:
@@ -208,6 +215,12 @@ async def _migrate(engine: AsyncEngine) -> None:
             # PRAGMA check so an existing populated DB keeps all its rows.
             if "jd_text" not in app_columns:
                 await conn.execute(text("ALTER TABLE applications ADD COLUMN jd_text TEXT"))
+            # Phase E1 addendum: the role applied for. Same PRAGMA guard, so a
+            # populated applications table gains the column and loses no rows.
+            if "job_title" not in app_columns:
+                await conn.execute(
+                    text("ALTER TABLE applications ADD COLUMN job_title TEXT")
+                )
         portal_rows = (await conn.execute(text("PRAGMA table_info(portals)"))).all()
         if portal_rows:
             portal_columns = {row[1] for row in portal_rows}

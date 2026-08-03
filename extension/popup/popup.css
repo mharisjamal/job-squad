@@ -1,0 +1,295 @@
+/*
+ * Worklight, dark. The app's CSS variables do not cross into an extension, so
+ * the palette is written out here as plain hex.
+ *
+ *   canvas #0B0C0E   paper #141618   raised #1C1E21   line #292B2F
+ *   ink #F2F3F4      muted #9CA1A8   focus #7AA2F7    danger #F08080
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 360px;
+  background: #0b0c0e;
+  color: #f2f3f4;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------------- chrome */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #141618;
+  border-bottom: 1px solid #292b2f;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid #3fa875;
+  background: #f2f3f4;
+  background-clip: content-box;
+  flex: none;
+}
+
+.env {
+  font-size: 11px;
+  color: #9ca1a8;
+  font-variant-numeric: tabular-nums;
+}
+
+.view {
+  padding: 14px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid #292b2f;
+  font-size: 11px;
+}
+
+/* ----------------------------------------------------------------- text */
+
+.h {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.muted {
+  margin: 0 0 12px;
+  color: #9ca1a8;
+}
+
+.known {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #292b2f;
+  border-left: 2px solid #7aa2f7;
+  border-radius: 4px;
+  background: #141618;
+  color: #9ca1a8;
+  font-size: 12px;
+}
+
+.jd,
+.note {
+  margin: 2px 0 10px;
+  color: #9ca1a8;
+  font-size: 11.5px;
+}
+
+/* The job description is the one field the squad reads in full, so it gets a
+   visible container of its own rather than hiding inside a character count. */
+.jd-block {
+  margin: 2px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #292b2f;
+  border-radius: 4px;
+  background: #141618;
+}
+
+.jd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #f2f3f4;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #3fa875;
+  cursor: pointer;
+}
+
+.jd-block .jd,
+.jd-block .note {
+  margin: 5px 0 0;
+}
+
+.jd-text {
+  margin-top: 8px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.jd-block.excluded .jd,
+.jd-block.excluded .jd-text {
+  opacity: 0.55;
+}
+
+.error {
+  margin: 2px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #3a2626;
+  border-radius: 4px;
+  background: #1c1618;
+  color: #f08080;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.done {
+  margin: 24px 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #5fbf8c;
+}
+
+/* --------------------------------------------------------------- fields */
+
+.field {
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row .field {
+  flex: 1 1 0;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: #9ca1a8;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #292b2f;
+  border-radius: 4px;
+  background: #1c1e21;
+  color: #f2f3f4;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.input:focus {
+  outline: 2px solid #7aa2f7;
+  outline-offset: 1px;
+  border-color: #7aa2f7;
+}
+
+select.input {
+  appearance: none;
+  cursor: pointer;
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, #9ca1a8 50%),
+    linear-gradient(135deg, #9ca1a8 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% + 1px), calc(100% - 9px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a9b0ba;
+  flex: none;
+}
+
+/* -------------------------------------------------------------- buttons */
+
+.primary {
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border: 1px solid #3fa875;
+  border-radius: 4px;
+  background: #3fa875;
+  color: #0b0c0e;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:hover {
+  background: #4cb984;
+}
+
+.primary:focus-visible {
+  outline: 2px solid #7aa2f7;
+  outline-offset: 2px;
+}
+
+.primary[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.link {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: #9ca1a8;
+  font-family: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: #f2f3f4;
+}
+
+.settings {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #292b2f;
+}

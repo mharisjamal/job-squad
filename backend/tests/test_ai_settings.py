@@ -173,3 +173,149 @@ async def test_test_endpoint_without_settings(client, register):
     body = resp.json()
     assert body["ok"] is False
     assert "Configure" in body["error"]
+
+
+# ---------------------------------------------------------------------------
+# base_url is a credential destination (F1a). The stored key is sent to it as a
+# bearer token, so repointing it without re-entering the key was a working
+# exfiltration path: PUT a new base_url with a blank key (which keeps the stored
+# ciphertext), then press "Test" and the server hands the victim's key to the
+# attacker's server.
+# ---------------------------------------------------------------------------
+
+
+async def _stored_key(asgi_app, user_id):
+    async with asgi_app.state.sessionmaker() as session:
+        row = await session.get(UserAISettings, user_id)
+    return None if row is None else decrypt_secret(row.key_encrypted, TEST_SECRET)
+
+
+async def test_repointing_base_url_without_a_key_is_422_and_keeps_the_key(
+    client, register, asgi_app
+):
+    account = await register(username="haris")
+    await _put(client, account["headers"], provider="groq", key="victim-key")
+
+    resp = await _put(
+        client, account["headers"], provider="custom",
+        base_url="https://attacker.example.com", model="m",
+    )
+    assert resp.status_code == 422
+    assert "Re-enter your API key" in resp.json()["detail"]
+
+    # The settings row is untouched: same key, same endpoint.
+    async with asgi_app.state.sessionmaker() as session:
+        row = await session.get(UserAISettings, account["user"]["id"])
+    assert row.base_url == "https://api.groq.com/openai/v1"
+    assert decrypt_secret(row.key_encrypted, TEST_SECRET) == "victim-key"
+
+
+async def test_the_exfiltration_path_is_closed_end_to_end(
+    client, register, monkeypatch, asgi_app
+):
+    """The full proven attack: repoint, then press Test. The rejected PUT means
+    the test call still goes to the real provider, never to the attacker."""
+    account = await register(username="haris")
+    await _put(client, account["headers"], provider="groq", key="victim-key")
+    await _put(
+        client, account["headers"], provider="custom",
+        base_url="https://attacker.example.com", model="m",
+    )
+
+    captured = {}
+
+    async def fake_chat_completion(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(ai_module, "chat_completion", fake_chat_completion)
+    await client.post("/api/settings/ai/test", headers=account["headers"])
+    assert captured["base_url"] == "https://api.groq.com/openai/v1"
+    assert "attacker" not in captured["base_url"]
+
+
+async def test_repointing_base_url_with_a_new_key_is_allowed(
+    client, register, asgi_app
+):
+    account = await register(username="haris")
+    await _put(client, account["headers"], provider="groq", key="old-key")
+    resp = await _put(
+        client, account["headers"], provider="custom",
+        base_url="https://llm.example.com/v1", model="m", key="new-key",
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["base_url"] == "https://llm.example.com/v1"
+    assert await _stored_key(asgi_app, account["user"]["id"]) == "new-key"
+
+
+async def test_same_base_url_with_blank_key_still_works(client, register, asgi_app):
+    """Changing only the model must not demand the key again."""
+    account = await register(username="haris")
+    await _put(client, account["headers"], provider="groq", key="original-key")
+    resp = await _put(client, account["headers"], provider="groq", model="llama-3.1-8b")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model"] == "llama-3.1-8b"
+    assert await _stored_key(asgi_app, account["user"]["id"]) == "original-key"
+
+    # A trailing slash is the same endpoint, not a change.
+    resp = await _put(
+        client, account["headers"], provider="custom",
+        base_url="https://api.groq.com/openai/v1/", model="m",
+    )
+    assert resp.status_code == 200, resp.text
+    assert await _stored_key(asgi_app, account["user"]["id"]) == "original-key"
+
+
+async def test_plaintext_http_base_url_is_422(client, register):
+    account = await register(username="haris")
+    resp = await _put(
+        client, account["headers"], provider="custom",
+        base_url="http://evil.example.com", model="m", key="k",
+    )
+    assert resp.status_code == 422
+    assert "https" in resp.json()["detail"]
+
+
+async def test_localhost_http_base_url_is_allowed(client, register):
+    """A local model server has no TLS and never leaves the machine."""
+    account = await register(username="haris")
+    for base_url in ("http://localhost:1234/v1", "http://127.0.0.1:8080/v1"):
+        resp = await _put(
+            client, account["headers"], provider="custom",
+            base_url=base_url, model="m", key="k",
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["base_url"] == base_url
+
+
+async def test_https_provider_base_url_is_allowed(client, register):
+    account = await register(username="haris")
+    resp = await _put(
+        client, account["headers"], provider="custom",
+        base_url="https://api.groq.com/openai/v1", model="m", key="k",
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_non_http_schemes_are_422(client, register):
+    account = await register(username="haris")
+    for base_url in ("file:///etc/passwd", "ftp://host/x", "javascript:alert(1)", "//host/v1"):
+        resp = await _put(
+            client, account["headers"], provider="custom",
+            base_url=base_url, model="m", key="k",
+        )
+        assert resp.status_code == 422, base_url
+
+
+def test_base_url_problem_rules():
+    from app.routers.settings import base_url_problem
+
+    assert base_url_problem("https://api.groq.com/openai/v1") is None
+    assert base_url_problem("http://localhost:1234/v1") is None
+    assert base_url_problem("http://127.0.0.1:8080") is None
+    assert base_url_problem(None) is None  # nothing configured, nothing sent
+    assert base_url_problem("") is None
+    assert base_url_problem("http://evil.example.com") is not None
+    assert base_url_problem("http://localhost.evil.com") is not None
+    assert base_url_problem("ftp://host/x") is not None
+    assert base_url_problem("https://") is not None

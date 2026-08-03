@@ -13,6 +13,7 @@ import Resumes from "./pages/Resumes";
 import Members from "./pages/Members";
 import Activity from "./pages/Activity";
 import SettingsAi from "./pages/SettingsAi";
+import Connect from "./pages/Connect";
 import { GroupShell } from "./components/layout/Shell";
 
 export default function App() {
@@ -43,6 +44,9 @@ export default function App() {
       {/* Stays mounted when adopting an OAuth token flips the app to authed. */}
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/" element={<Groups />} />
+      {/* Extension pairing target. Group-independent: the extension opens
+          {public_url}/connect directly, so it cannot carry a group id. */}
+      <Route path="/connect" element={<Connect />} />
       <Route path="/g/:gid" element={<GroupShell />}>
         <Route index element={<Dashboard />} />
         <Route path="companies" element={<Companies />} />

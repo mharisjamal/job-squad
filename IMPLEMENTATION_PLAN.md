@@ -433,6 +433,61 @@ Verifier focus for G2: only the owner can transfer (member 403, non-member 404);
 
 Verifier focus for G1: private groups never appear in discover and 404 (not 403) for non-members on every route; only the owner can PATCH visibility/description, view/approve/reject requests, remove members, regenerate the code; request flow can't create duplicate pending rows or let a member re-request; remove-member cleans up that user's data like leave; regenerate-invite actually invalidates the old code; migration idempotent + non-destructive on populated SQLite AND Postgres (existing groups become private).
 
+## 9d. Browser extension (Phase E1; added 2026-07-31)
+
+Why: data-entry fatigue is what kills job trackers. The extension is also a BETTER scraper than any server-side one (it reads a page the user legitimately opened, works behind LinkedIn/Workday logins, costs nothing, no IP bans, far less ToS exposure). Server-side scraping stays out of scope. **The extension is free for every user; it is not a paid tier.**
+
+It is also the missing input pipe for shipped features: the captured job description feeds the R2 match report and R3 tailoring, and the captured source domain feeds portal-effectiveness stats.
+
+### Decisions (frozen)
+- **Primary action = capture the CURRENT page** (toolbar click or Ctrl+Shift+J). Right-click a link is the secondary path.
+- **Never silently save.** The popup always shows extracted fields, editable, with one confirm click. Wrong data destroys trust faster than friction does.
+- **Extraction order:** (1) `schema.org/JobPosting` JSON-LD (most boards emit it for Google Jobs), (2) site rules for LinkedIn, Indeed, Workday, Greenhouse, Lever, (3) generic fallback (title + meta + main text). Always user-editable.
+- **Auth = pairing flow** (works for OAuth users, unlike an in-extension password form).
+- E1 permissions stay minimal: `storage`, `activeTab`, `scripting`, `contextMenus`, and host permissions ONLY for the app origins. No job-board host permissions until E2.
+
+### Pairing protocol (exact)
+1. Extension popup (unpaired) opens `{public_url}/connect` in a tab.
+2. That page (user already logged in) POSTs `/api/auth/extension-token` and receives the token ONCE.
+3. Page calls `window.postMessage({source:"jobsquad-app", type:"extension-token", token, api_base}, window.location.origin)`.
+4. The extension content script on `/connect` accepts it ONLY when `event.source === window` AND `event.origin === location.origin` AND `data.source === "jobsquad-app"`, then forwards to the service worker, which stores it in `chrome.storage.local`.
+5. Content script posts back `{source:"jobsquad-extension", type:"paired"}`; the page shows "Extension connected".
+This needs no `externally_connectable` and no hardcoded extension id, so unpacked-dev and store builds both work.
+
+### Backend
+- **extension_tokens**: id PK, user_id FK CASCADE, jti TEXT UNIQUE NOT NULL, label TEXT NULL, created_at, last_used_at NULL, revoked BOOL default false. Index(user_id).
+- Extension JWTs carry `{sub, exp, typ:"ext", jti}` with TTL 365 days. `get_current_user` additionally accepts `typ=="ext"` only when the jti row exists and is not revoked; it bumps `last_used_at` at most once per hour (avoid a write per request). Session tokens are unchanged (no `typ` claim).
+- **Lateral-movement guard:** an extension token is REJECTED (401) on the extension-token management routes themselves, so a stolen extension token cannot mint or manage more tokens.
+- `POST /api/auth/extension-token` (session token only) -> `{token, id, created_at}` (token returned once, never again). `GET /api/auth/extension-tokens` -> `[{id,label,created_at,last_used_at}]` (never the token). `DELETE /api/auth/extension-tokens/{id}` -> revoke.
+- `POST /api/capture` (group-scoped, member only) body `{group_id, company_name, company_website?, careers_url?, location?, posting_url?, jd_text?, status?}` -> in ONE transaction: find-or-create the company (case-insensitive normalized name match within the group, also matching on website registrable domain, so the extension never creates duplicate companies), find-or-create the portal from the posting URL's domain (known map: linkedin.com->LinkedIn, indeed.com->Indeed, glassdoor->Glassdoor, wellfound.com->Wellfound, bayt.com->Bayt, rozee.pk->Rozee, *.myworkdayjobs.com->Workday, greenhouse.io->Greenhouse, lever.co->Lever; otherwise the registrable domain), then upsert MY application with merge semantics (`status` default `saved`, plus `url`, `jd_text`, `applied_via_portal_id`). Returns `{company_id, company_name, application_id, status, created_company, created_portal, portal_name}` so the popup can say "Added TechCorp" vs "Updated your application".
+- `GET /api/capture/lookup?group_id=&url=&company_name=` -> `{company_id|null, company_name|null, my_status|null, squad:[{display_name,status}]}` so the popup shows "Ali: rejected" BEFORE you save. Member-only, 404 for a non-member group.
+
+### Web app
+- Route `/connect`: explains the extension, a "Connect extension" button running the pairing protocol, and a connected/failed state (with a clear message when the extension is not installed, i.e. no `paired` reply within ~3s).
+- AI-settings-style panel entry "Connected extensions": list (label, created, last used) with Revoke, wired to the two management endpoints.
+
+### Extension (repo folder `extension/`, plain HTML/CSS/JS, Manifest V3, no build step so it loads unpacked)
+```
+extension/manifest.json
+extension/background.js      service worker: context menu, Ctrl+Shift+J command, token storage, API calls
+extension/content/extract.js injected on demand via scripting.executeScript (activeTab), returns extracted fields
+extension/content/connect.js content script on {app}/connect only, runs the pairing handshake
+extension/popup/popup.html|css|js  capture card (editable fields, group picker, squad-status line, Save)
+extension/icons/16|32|48|128.png   reuse the app icon (white dot in a green ring on the dark tile)
+```
+- Popup styling uses the Worklight dark values directly (hex is fine here; the app's CSS variables do not reach the extension).
+- API base defaults to `https://jobsquad.dpdns.org`, overridable in the popup for local dev against `http://localhost:8100`; both in `host_permissions`.
+- Unpaired popup shows only a "Connect to JobSquad" button. Paired popup: extracted title/company/location/URL (editable), group picker (remembers last used), status select (default Saved), the lookup line ("Ali applied here - rejected") when the company is known, and Save. Errors surfaced verbatim; never save silently.
+
+### E1 addendum: applications carry a job title (2026-07-31)
+Capture surfaces the role title, which had nowhere to live (applications tracked a company, not the role). Add **applications.job_title** TEXT NULL (max 200, trimmed, blank -> null), idempotent dual-dialect migration like resume_id/jd_text/region. Accepted by the application PUT (merge semantics) and by `POST /api/capture`; included in ApplicationFull and ApplicationBrief. The web app shows it in the My-application editor and on squad status cards; the board card shows it under the company name when present. This also makes "which role did I apply for at this company" answerable, which the product could not express before.
+
+### Verifier focus for E1
+Pairing message validated on origin+source+shape (a hostile page must not be able to hand the extension a token, and a hostile page must not be able to read it); extension token revocation actually blocks use; extension tokens rejected on the token-management routes; `/api/capture` cannot write into a group the caller is not a member of (404) and cannot create duplicate companies on repeat capture of the same posting; jd_text respects the 50k cap; lookup leaks nothing for non-members; `activeTab`/`scripting` used instead of broad host permissions; no secrets logged; no em-dash.
+
+### Parked (E2/E3)
+E2: squad-awareness badges injected into LinkedIn/Indeed result lists (the multiplayer differentiator), quick status updates from the popup. E3: application-submission detection, periodic re-check of whether a saved posting is still live. Explicitly out: ATS autofill (a maintenance treadmill and effectively a separate product), email parsing.
+
 ## 10. Non-goals (v1)
 
 Email/password reset, avatar uploads, push/mobile notifications, roles beyond owner/member, group deletion or member removal, multi-language, dark theme, SSR, offline. All fine later; nothing in v1 blocks them.

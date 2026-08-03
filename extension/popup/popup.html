@@ -101,6 +101,24 @@
 
           <button id="save-btn" class="primary" type="submit">Save to JobSquad</button>
         </form>
+
+        <section id="addons" class="addons">
+          <h2 class="addons-h">Job board add-ons</h2>
+
+          <label class="check" for="opt-badges">
+            <input id="opt-badges" type="checkbox" aria-describedby="opt-badges-note" />
+            <span>Show squad status on job boards</span>
+          </label>
+          <p id="opt-badges-note" class="note"></p>
+
+          <label class="check" for="opt-submitted">
+            <input id="opt-submitted" type="checkbox" aria-describedby="opt-submitted-note" />
+            <span>Offer to mark applications as applied</span>
+          </label>
+          <p id="opt-submitted-note" class="note"></p>
+
+          <p id="addons-error" class="error" hidden></p>
+        </section>
       </section>
 
       <section id="view-done" class="view" hidden>

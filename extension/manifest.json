@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobSquad",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Capture a job posting into your JobSquad group in one click. You always confirm before anything is saved.",
   "permissions": [
     "storage",
@@ -12,6 +12,13 @@
   "host_permissions": [
     "https://jobsquad.dpdns.org/*",
     "http://localhost:8100/*"
+  ],
+  "optional_host_permissions": [
+    "https://*.linkedin.com/jobs/*",
+    "https://*.indeed.com/*",
+    "https://*.greenhouse.io/*",
+    "https://*.lever.co/*",
+    "https://*.myworkdayjobs.com/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

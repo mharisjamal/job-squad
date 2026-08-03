@@ -36,6 +36,30 @@ var STATUS_COLORS = {
 var SEP = " · ";
 var DEFAULT_API_BASE = "https://jobsquad.dpdns.org";
 
+// Optional host permissions, requested only when the user turns a feature on
+// and handed back when they turn it off. These are NOT in the install time
+// manifest: "read your data on LinkedIn" is not a price to pay at install for
+// a feature you may never enable.
+//
+// LinkedIn is asked for at /jobs/* only: the feed, messaging, notifications and
+// profile pages are not job results, so the add-on has no business reading them
+// and does not ask to. This list must stay identical to BOARD_FEATURES in
+// background.js and to optional_host_permissions in the manifest. Chrome
+// compares the three, and a mismatch shows up as a toggle that will not stay on.
+var FEATURE_ORIGINS = {
+  badges: ["https://*.linkedin.com/jobs/*", "https://*.indeed.com/*"],
+  submitted: [
+    "https://*.greenhouse.io/*",
+    "https://*.lever.co/*",
+    "https://*.myworkdayjobs.com/*"
+  ]
+};
+
+var FEATURE_SITES = {
+  badges: "LinkedIn and Indeed",
+  submitted: "Greenhouse, Lever and Workday"
+};
+
 // Mirrors the server side field limits (NAME_MAX, URL_MAX, JD_TEXT_MAX), so an
 // over long scrape is trimmed here instead of coming back as a 422.
 var LIMIT_NAME = 120;
@@ -133,6 +157,114 @@ function statusLabel(value) {
     if (STATUSES[i][0] === value) return STATUSES[i][1];
   }
   return value ? String(value) : "";
+}
+
+/* -------------------------------------------------------------- add-ons */
+
+// Asked of Chrome every time the popup opens. A remembered "on" would keep
+// claiming the feature is enabled after the user revoked the permission from
+// chrome://extensions, which is exactly the kind of lie a permission UI must
+// not tell.
+function permissionHeld(feature) {
+  return new Promise(function (resolve) {
+    try {
+      chrome.permissions.contains({ origins: FEATURE_ORIGINS[feature] }, function (granted) {
+        if (chrome.runtime.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(Boolean(granted));
+      });
+    } catch (err) {
+      resolve(false);
+    }
+  });
+}
+
+function groupLabel() {
+  var select = $("f-group");
+  if (!select || select.disabled) return "";
+  var option = select.options[select.selectedIndex];
+  return option && option.value ? option.textContent : "";
+}
+
+function featureNote(feature, on) {
+  var where = FEATURE_SITES[feature];
+  if (!on) {
+    return "Off. Turning this on asks Chrome for access to " + where + ". Turning it off hands it back.";
+  }
+  if (state.lastGroupId === null) {
+    return "On for " + where + ", but no group is chosen yet. Pick a group above, then it can start.";
+  }
+  var name = groupLabel();
+  var group = name ? name : "your last used group";
+  if (feature === "badges") {
+    return "On for " + where + ". Result rows show what " + group + " already knows. Rows nobody has touched stay untouched.";
+  }
+  return (
+    "On for " +
+    where +
+    ". After you submit, a small prompt offers to mark the company applied in " +
+    group +
+    ". It never fills in or submits anything."
+  );
+}
+
+function renderAddons() {
+  setText("opt-badges-note", featureNote("badges", $("opt-badges").checked));
+  setText("opt-submitted-note", featureNote("submitted", $("opt-submitted").checked));
+}
+
+function refreshAddons() {
+  return Promise.all([permissionHeld("badges"), permissionHeld("submitted")]).then(function (held) {
+    $("opt-badges").checked = held[0];
+    $("opt-submitted").checked = held[1];
+    renderAddons();
+    // The worker owns the dynamic content script registrations. Asking it to
+    // sync makes a permission revoked outside this popup unregister the script
+    // too, instead of leaving a dead entry behind.
+    return send({ type: "board-features" });
+  });
+}
+
+function onFeatureToggle(feature, inputId) {
+  var input = $(inputId);
+  var wanted = input.checked;
+  setMessage("addons-error", "");
+  input.disabled = true;
+
+  function settle(held) {
+    input.checked = held;
+    input.disabled = false;
+    renderAddons();
+    refreshAddons();
+  }
+
+  // chrome.permissions.request must run inside the user gesture, so nothing is
+  // awaited before this point.
+  try {
+    if (wanted) {
+      chrome.permissions.request({ origins: FEATURE_ORIGINS[feature] }, function (granted) {
+        if (chrome.runtime.lastError || !granted) {
+          setMessage(
+            "addons-error",
+            "Not enabled: Chrome did not grant access to " + FEATURE_SITES[feature] + "."
+          );
+        }
+        settle(Boolean(granted) && !chrome.runtime.lastError);
+      });
+      return;
+    }
+    chrome.permissions.remove({ origins: FEATURE_ORIGINS[feature] }, function (removed) {
+      if (chrome.runtime.lastError || !removed) {
+        setMessage("addons-error", "Chrome could not remove that access. Try again.");
+      }
+      settle(!removed);
+    });
+  } catch (err) {
+    setMessage("addons-error", "This browser did not accept that permission change.");
+    settle(!wanted);
+  }
 }
 
 /* ------------------------------------------------------------------ tabs */
@@ -304,6 +436,17 @@ function renderGroups(groups) {
     if (select.options[i].value === wanted) found = true;
   }
   select.value = found ? wanted : String(groups[0].id);
+
+  // Remember the group the popup would actually save into, even when the user
+  // never touched the picker. The board add-ons read this, so leaving it unset
+  // would mean "you have a group selected right here" and "no group chosen
+  // yet" at the same time.
+  var chosen = Number(select.value);
+  if (Number.isFinite(chosen) && chosen > 0 && chosen !== state.lastGroupId) {
+    state.lastGroupId = chosen;
+    send({ type: "set-last-group", group_id: chosen });
+  }
+  renderAddons();
 }
 
 function renderLookup(data) {
@@ -508,10 +651,21 @@ function wireEvents() {
   });
   $("f-group").addEventListener("change", function () {
     var groupId = Number($("f-group").value);
-    if (Number.isFinite(groupId)) send({ type: "set-last-group", group_id: groupId });
+    if (Number.isFinite(groupId)) {
+      state.lastGroupId = groupId;
+      send({ type: "set-last-group", group_id: groupId });
+    }
+    renderAddons();
     refreshLookup();
   });
   $("f-company").addEventListener("change", refreshLookup);
+
+  $("opt-badges").addEventListener("change", function () {
+    onFeatureToggle("badges", "opt-badges");
+  });
+  $("opt-submitted").addEventListener("change", function () {
+    onFeatureToggle("submitted", "opt-submitted");
+  });
 }
 
 function startCapture() {
@@ -524,9 +678,17 @@ function startCapture() {
   Promise.all([tabPromise, pendingPromise])
     .then(function (values) {
       var tab = values[0];
-      var pending = values[1] && values[1].fields ? values[1].fields : null;
+      var handoff = values[1] || {};
+      var pending = handoff.fields && typeof handoff.fields === "object" ? handoff.fields : null;
+      // Right-clicked link: the only thing that was read is the link itself.
+      // Extraction is skipped outright, because the page it would read is the
+      // page the user right-clicked ON, not the posting behind the link, and
+      // presenting those fields as the link's would be a lie.
+      var linkOnly = Boolean(handoff.link_only);
 
-      return runExtraction(tab).then(function (extracted) {
+      var extraction = linkOnly ? Promise.resolve(null) : runExtraction(tab);
+
+      return extraction.then(function (extracted) {
         var fields = {
           company_name: "",
           job_title: "",
@@ -545,14 +707,19 @@ function startCapture() {
             if (!fields[key] && typeof pending[key] === "string") fields[key] = pending[key];
           });
         }
-        if (!fields.posting_url && tab && tab.url && isHttpUrl(tab.url)) {
+        if (!linkOnly && !fields.posting_url && tab && tab.url && isHttpUrl(tab.url)) {
           fields.posting_url = tab.url;
         }
         fields.jd_source = extracted && typeof extracted.jd_source === "string" ? extracted.jd_source : "";
 
         fillFields(fields);
 
-        if (!extracted) {
+        if (linkOnly) {
+          setMessage(
+            "capture-note",
+            "Only the link was read, nothing from the posting itself. Open it and press Ctrl+Shift+J to fill in the rest, or type what you know."
+          );
+        } else if (!extracted) {
           setMessage(
             "capture-note",
             "Could not read this page automatically. Fill in the details before saving."
@@ -562,6 +729,7 @@ function startCapture() {
         }
 
         show("view-capture");
+        refreshAddons();
         return loadGroups();
       });
     })

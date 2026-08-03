@@ -293,3 +293,32 @@ select.input {
   padding-top: 12px;
   border-top: 1px solid #292b2f;
 }
+
+/* Opt-in job board features. Kept below the Save button because they are
+   settings, not part of the capture the user came here to confirm. */
+.addons {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #292b2f;
+}
+
+.addons-h {
+  margin: 0 0 8px;
+  color: #9ca1a8;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.addons .check + .note {
+  margin: 3px 0 10px 21px;
+}
+
+.addons .check {
+  align-items: flex-start;
+}
+
+.addons .check input {
+  margin-top: 2px;
+}

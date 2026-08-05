@@ -90,9 +90,16 @@
     'font:500 11px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;' +
     "white-space:nowrap;vertical-align:middle;max-width:100%;overflow:hidden;" +
     "text-overflow:ellipsis;}" +
-    "@media (prefers-color-scheme:dark){." +
+    // Applied from the measured surface below, not from a
+    // prefers-color-scheme media query. The query answers "is the OS dark",
+    // and the boards carry their own theme: with the OS dark and LinkedIn
+    // light, the media query paints a dark chip onto a white card. Measured
+    // live on a real results page, which is the only way this shows up.
+    // The variant rides a class INSIDE the shadow root rather than an
+    // attribute on the host, so it stays unreadable to the page.
+    "." +
     CHIP_CLASS +
-    "{background:#12241b;color:#8fd6b0;border-color:#2f7a57;}}";
+    "-dark{background:#12241b;color:#8fd6b0;border-color:#2f7a57;}";
 
   /* ------------------------------------------------------------ site rules */
 
@@ -302,6 +309,39 @@
     return text;
   }
 
+  // Which variant to paint, decided by the surface the chip will actually sit
+  // on rather than by the OS preference. Walks up for the first ancestor with
+  // a mostly-opaque background and reads its luminance. If nothing opaque is
+  // found the canvas shows through, and the canvas is white unless the
+  // document declares a dark color-scheme.
+  function surfaceIsDark(node) {
+    var el = node;
+    while (el && el.nodeType === 1) {
+      var bg = "";
+      try {
+        bg = window.getComputedStyle(el).backgroundColor || "";
+      } catch (err) {
+        bg = "";
+      }
+      var m = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/i.exec(bg);
+      if (m) {
+        var alpha = m[4] === undefined ? 1 : parseFloat(m[4]);
+        if (alpha >= 0.5) {
+          var lum = (0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3])) / 255;
+          return lum < 0.5;
+        }
+      }
+      el = el.parentElement;
+    }
+    var scheme = "";
+    try {
+      scheme = window.getComputedStyle(document.documentElement).colorScheme || "";
+    } catch (err) {
+      scheme = "";
+    }
+    return /\bdark\b/i.test(scheme) && !/\blight\b/i.test(scheme);
+  }
+
   // Rows we have already answered for, and the host spans we put in the page.
   // Both are WeakSets: nothing about them is readable as a DOM attribute, and
   // a row the SPA throws away takes its entry with it.
@@ -333,7 +373,7 @@
     style.textContent = CHIP_CSS;
 
     var chip = document.createElement("span");
-    chip.className = CHIP_CLASS;
+    chip.className = surfaceIsDark(row) ? CHIP_CLASS + " " + CHIP_CLASS + "-dark" : CHIP_CLASS;
     // textContent, never innerHTML: display names and statuses come off the
     // API and must never be parsed as markup.
     chip.textContent = text;
